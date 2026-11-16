@@ -103,9 +103,7 @@ def test_unknown_severity_falls_back_to_warning() -> None:
 
 def test_future_and_invalid_timestamps_use_receive_time() -> None:
     future = (NOW + timedelta(days=30)).isoformat()
-    alerts = parse_batch(
-        [detection("A", timestamp=future), detection("B", timestamp="not-a-date")], now=NOW
-    ).alerts
+    alerts = parse_batch([detection("A", timestamp=future), detection("B", timestamp="not-a-date")], now=NOW).alerts
     assert [alert.occurred_at for alert in alerts] == [NOW, NOW]
 
 

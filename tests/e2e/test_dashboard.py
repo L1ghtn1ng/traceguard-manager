@@ -3,7 +3,7 @@ import uuid
 from collections.abc import Callable
 
 import pytest
-from playwright.sync_api import Browser, Page, expect
+from playwright.sync_api import Browser, Page, Route, expect
 
 from tests.helpers import detection, heartbeat
 
@@ -58,17 +58,13 @@ def test_sign_in_returns_to_the_requested_page(page: Page, server: Server) -> No
     expect(page.get_by_role("heading", name="Fleet")).to_be_visible()
 
 
-def test_enrol_ingest_and_triage_an_alert(
-    page: Page, server: Server, sign_in: SignIn, csp_violations: list[str]
-) -> None:
+def test_enrol_ingest_and_triage_an_alert(page: Page, server: Server, sign_in: SignIn, csp_violations: list[str]) -> None:
     sign_in(page)
     name = unique("web")
     token = enrol_agent(page, server, name)
     title = f"Reverse shell on {name}"
 
-    result = server.ingest(
-        token, [heartbeat(name), detection(unique("alert"), name, detection_message=title)]
-    )
+    result = server.ingest(token, [heartbeat(name), detection(unique("alert"), name, detection_message=title)])
     assert result["stored"] == 1
 
     page.goto(f"{server.url}/agents")
@@ -106,9 +102,7 @@ def test_new_alerts_appear_live_without_reloading(page: Page, server: Server, si
     expect(page.get_by_test_id("open-alerts")).to_have_text(str(before + 1))
 
 
-def test_bulk_acknowledge_from_the_alert_list(
-    page: Page, browser: Browser, server: Server, sign_in: SignIn
-) -> None:
+def test_bulk_acknowledge_from_the_alert_list(page: Page, browser: Browser, server: Server, sign_in: SignIn) -> None:
     sign_in(page, "analyst")
     admin_context = browser.new_context()
     admin_page = admin_context.new_page()
@@ -143,9 +137,7 @@ def test_viewer_sees_no_admin_controls(page: Page, server: Server, sign_in: Sign
     expect(page.get_by_role("heading", name="You do not have access to this page")).to_be_visible()
 
 
-def test_admin_adds_a_user_who_can_sign_in(
-    page: Page, browser: Browser, server: Server, sign_in: SignIn
-) -> None:
+def test_admin_adds_a_user_who_can_sign_in(page: Page, browser: Browser, server: Server, sign_in: SignIn) -> None:
     sign_in(page)
     username = unique("user")
     password = "an-e2e-only-passphrase-1"
@@ -174,9 +166,7 @@ def test_sign_out_ends_the_session(page: Page, server: Server) -> None:
     expect(page).to_have_url(re.compile(r"/login$"))
 
 
-def test_pages_render_without_console_errors(
-    page: Page, server: Server, sign_in: SignIn, csp_violations: list[str]
-) -> None:
+def test_pages_render_without_console_errors(page: Page, server: Server, sign_in: SignIn, csp_violations: list[str]) -> None:
     sign_in(page)
     for path in ("/", "/alerts", "/agents", "/users", "/audit", "/account"):
         page.goto(f"{server.url}{path}")
@@ -192,3 +182,124 @@ def test_layout_adapts_to_a_phone(page: Page, sign_in: SignIn) -> None:
     expect(page.get_by_role("link", name="Fleet")).to_be_in_viewport()
     overflow = page.evaluate("document.documentElement.scrollWidth - document.documentElement.clientWidth")
     assert overflow <= 0
+
+
+def change_password(page: Page) -> None:
+    page.get_by_label("Current password").fill("whatever-it-was-before-1")
+    page.get_by_label("New password").fill("a-brand-new-passphrase-1")
+    page.get_by_role("button", name="Update password").click()
+
+
+def test_session_ended_by_the_server_is_announced_on_the_next_action(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page, "viewer")
+    page.goto(f"{server.url}/account")
+    # What the server answers once it has expired or revoked the session.
+    refusal = '{"error": "Sign in required"}'
+    page.route("**/account/password", lambda route: route.fulfill(status=401, content_type="application/json", body=refusal))
+    change_password(page)
+    expect(page.locator("#session-banner")).to_be_visible()
+    expect(page.locator(".form-error")).to_contain_text("Your session has ended")
+    expect(page).to_have_url(f"{server.url}/account")
+
+
+def test_session_cookie_dropped_by_the_browser_is_announced_on_the_next_action(
+    page: Page, server: Server, sign_in: SignIn
+) -> None:
+    sign_in(page, "viewer")
+    page.goto(f"{server.url}/account")
+    # Let the stream open first, so nothing still in flight can hand the cookie back.
+    expect(page.locator("#live-indicator")).to_have_attribute("data-state", "live")
+    page.context.clear_cookies(name="flasgo-session")  # the shared session itself stays valid for other tests
+
+    # The CSRF token no longer matches, so the server answers 403 rather than 401.
+    with page.expect_response("**/account/password") as refused:
+        change_password(page)
+    assert refused.value.status == 403
+
+    banner = page.locator("#session-banner")
+    expect(banner).to_be_visible()
+    expect(banner.get_by_role("link", name="Sign in")).to_have_attribute("href", "/login?next=%2Faccount")
+    expect(page.locator(".form-error")).to_contain_text("Your session has ended")
+    expect(page).to_have_url(f"{server.url}/account")  # nothing typed is thrown away by a redirect
+    expect(page.locator("#live-indicator")).to_have_attribute("data-state", "ended")
+
+
+def test_ended_session_is_announced_when_live_updates_are_refused(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page, "viewer")
+
+    def refuse(route: Route) -> None:
+        # What the browser sees once the session is gone: the stream is refused outright.
+        page.context.clear_cookies(name="flasgo-session")
+        route.fulfill(status=401, content_type="application/json", body='{"error": "Sign in required"}')
+
+    page.route("**/stream", refuse)
+    page.goto(f"{server.url}/alerts?status=open")
+    banner = page.locator("#session-banner")
+    expect(banner).to_be_visible()
+    expect(banner.get_by_role("link", name="Sign in")).to_have_attribute("href", "/login?next=%2Falerts%3Fstatus%3Dopen")
+    expect(page.locator("#live-indicator")).to_have_attribute("data-state", "ended")
+
+
+def test_refused_live_updates_with_a_valid_session_are_not_called_a_sign_out(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page, "viewer")
+    page.route("**/stream", lambda route: route.fulfill(status=503, content_type="application/json", body="{}"))
+    with page.expect_response("**/auth/session") as probe:
+        page.goto(f"{server.url}/")
+    assert probe.value.status == 200
+    expect(page.locator("#session-banner")).to_be_hidden()
+    expect(page.locator("#live-indicator")).to_have_attribute("data-state", "idle")
+
+
+def test_enrol_link_from_the_overview_opens_the_dialog(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page)
+    page.goto(f"{server.url}/agents?enrol=1")
+    expect(page.get_by_label("Agent name")).to_be_visible()
+    expect(page).to_have_url(f"{server.url}/agents")  # so a reload does not open it again
+    page.get_by_role("button", name="Cancel").click()
+    page.reload()
+    expect(page.get_by_label("Agent name")).to_be_hidden()
+
+
+def test_pivot_from_an_alert_and_return_to_the_filtered_list(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page)
+    name = unique("pivot")
+    rule = unique("tg-rule")
+    token = enrol_agent(page, server, name)
+    title = f"Finding on {name}"
+    server.ingest(token, [heartbeat(name), detection(unique("alert"), name, detection_message=title, detection_rule_id=rule)])
+
+    filtered = f"{server.url}/alerts?q={name}&status=open"
+    page.goto(filtered)
+    page.get_by_role("link", name=title).click()
+    expect(page.get_by_role("heading", name=title)).to_be_visible()
+    page.get_by_role("link", name="Alerts", exact=True).last.click()
+    expect(page).to_have_url(filtered)  # back to the list as it was, not to the default one
+
+    page.get_by_role("link", name=title).click()
+    page.locator("dl.facts").get_by_role("link", name=rule).click()
+    expect(page).to_have_url(f"{server.url}/alerts?rule={rule}")
+    chips = page.get_by_test_id("pivots")
+    expect(chips).to_contain_text(rule)
+    expect(page.get_by_test_id("alerts-table")).to_contain_text(title)
+
+    page.get_by_label("Status").select_option("resolved")
+    page.get_by_role("button", name="Apply").click()
+    expect(chips).to_contain_text(rule)  # the form keeps the narrowing it has no control for
+    expect(page.get_by_text("No alerts match")).to_be_visible()
+
+    chips.get_by_role("link", name="Remove rule filter").click()
+    expect(page).to_have_url(f"{server.url}/alerts?status=resolved")
+    expect(page.get_by_test_id("pivots")).to_have_count(0)
+
+
+def test_chart_hour_links_to_that_hours_alerts(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page)
+    name = unique("chart")
+    token = enrol_agent(page, server, name)
+    server.ingest(token, [detection(unique("alert"), name, detection_message=f"Charted {name}")])
+
+    page.goto(f"{server.url}/")
+    page.locator("a.chart-hour").last.click()
+    expect(page).to_have_url(re.compile(r"/alerts\?hour=\d+$"))
+    expect(page.get_by_test_id("pivots")).to_contain_text("UTC")
+    expect(page.get_by_test_id("alerts-table")).to_contain_text(f"Charted {name}")

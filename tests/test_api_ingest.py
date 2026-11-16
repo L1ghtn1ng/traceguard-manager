@@ -79,9 +79,7 @@ async def test_rejects_wrong_shape_and_content_type(site: Site) -> None:
     not_array = await client.arequest("POST", "/api/v1/events", json={"event": "x"}, headers=auth)
     assert not_array.status_code == 400
 
-    bad_json = await client.arequest(
-        "POST", "/api/v1/events", body=b"[{", headers=auth | {"content-type": "application/json"}
-    )
+    bad_json = await client.arequest("POST", "/api/v1/events", body=b"[{", headers=auth | {"content-type": "application/json"})
     assert bad_json.status_code == 400
 
     wrong_type = await client.arequest(
@@ -126,9 +124,7 @@ async def test_ingest_is_rate_limited_per_agent(config, tmp_path) -> None:
         client = TestClient(manager.api)
         codes = [
             (
-                await client.arequest(
-                    "POST", "/api/v1/events", json=[telemetry()], headers={"authorization": f"Bearer {token}"}
-                )
+                await client.arequest("POST", "/api/v1/events", json=[telemetry()], headers={"authorization": f"Bearer {token}"})
             ).status_code
             for _ in range(5)
         ]

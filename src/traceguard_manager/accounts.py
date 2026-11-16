@@ -18,9 +18,7 @@ _TOUCH_INTERVAL = timedelta(seconds=60)
 ROLE_SCOPES: dict[str, frozenset[str]] = {
     Role.VIEWER.value: frozenset({"alerts:read", "agents:read"}),
     Role.ANALYST.value: frozenset({"alerts:read", "agents:read", "alerts:write"}),
-    Role.ADMIN.value: frozenset(
-        {"alerts:read", "agents:read", "alerts:write", "agents:write", "users:manage", "audit:read"}
-    ),
+    Role.ADMIN.value: frozenset({"alerts:read", "agents:read", "alerts:write", "agents:write", "users:manage", "audit:read"}),
 }
 
 
@@ -41,9 +39,7 @@ def normalise_username(username: str) -> str:
 async def create_user(session: AsyncSession, *, username: str, password: str, role: str) -> User:
     username = normalise_username(username)
     if not security.USERNAME_RE.fullmatch(username):
-        raise AccountError(
-            "Username must be 3-64 characters: lowercase letters, digits, dot, dash or underscore."
-        )
+        raise AccountError("Username must be 3-64 characters: lowercase letters, digits, dot, dash or underscore.")
     if role not in ROLE_SCOPES:
         raise AccountError("Unknown role.")
     try:
@@ -65,9 +61,7 @@ async def authenticate(session: AsyncSession, config: Config, *, username: str, 
     so response time does not reveal which usernames exist.
     """
     now = utcnow()
-    user = await session.scalar(
-        select(User).where(User.username == normalise_username(username)).with_for_update()
-    )
+    user = await session.scalar(select(User).where(User.username == normalise_username(username)).with_for_update())
     if user is None or not user.is_active:
         await security.verify_password(None, password)
         return LoginResult(None, "invalid")
@@ -134,9 +128,7 @@ async def end_session(session: AsyncSession, token: str) -> None:
     await session.execute(delete(UserSession).where(UserSession.token_hash == security.hash_token(token)))
 
 
-async def end_all_sessions(
-    session: AsyncSession, user_id: uuid.UUID, *, keep_token: str | None = None
-) -> None:
+async def end_all_sessions(session: AsyncSession, user_id: uuid.UUID, *, keep_token: str | None = None) -> None:
     statement = delete(UserSession).where(UserSession.user_id == user_id)
     if keep_token is not None:
         statement = statement.where(UserSession.token_hash != security.hash_token(keep_token))
@@ -145,9 +137,7 @@ async def end_all_sessions(
 
 async def purge_expired_sessions(session: AsyncSession, config: Config, *, now: datetime) -> None:
     idle_cutoff = now - timedelta(seconds=config.session_idle_seconds)
-    await session.execute(
-        delete(UserSession).where((UserSession.expires_at <= now) | (UserSession.last_seen_at <= idle_cutoff))
-    )
+    await session.execute(delete(UserSession).where((UserSession.expires_at <= now) | (UserSession.last_seen_at <= idle_cutoff)))
 
 
 async def change_password(session: AsyncSession, *, user: User, new_password: str) -> None:
@@ -187,9 +177,7 @@ async def update_user(session: AsyncSession, *, user: User, role: str | None, is
         raise AccountError("Unknown role.")
     new_role = user.role if role is None else role
     new_active = user.is_active if is_active is None else is_active
-    loses_admin = (
-        user.role == Role.ADMIN.value and user.is_active and (new_role != Role.ADMIN.value or not new_active)
-    )
+    loses_admin = user.role == Role.ADMIN.value and user.is_active and (new_role != Role.ADMIN.value or not new_active)
     if loses_admin and await _other_active_admins(session, user.id) == 0:
         raise AccountError("At least one active administrator is required.")
     user.role = new_role

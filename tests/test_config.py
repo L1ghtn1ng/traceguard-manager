@@ -1,6 +1,9 @@
+import re
+from pathlib import Path
+
 import pytest
 
-from traceguard_manager.config import Config, ConfigError
+from traceguard_manager.config import SETTINGS, Config, ConfigError
 
 KEY = "k" * 48
 
@@ -50,6 +53,7 @@ def test_parses_lists_and_booleans() -> None:
         {"TGM_DATABASE_URL": "mysql://nope"},
         {"TGM_DATABASE_URL": "sqlite:///sync-driver.db"},
         {"TGM_LOG_FORMAT": "xml"},
+        {"TGM_LOG_LEVEL": "verbose"},
         {"TGM_AGENT_OFFLINE_SECONDS": "five"},
         {"TGM_LOGIN_MAX_FAILURES": "1"},
         {"TGM_DEBUG": "true"},  # debug with secure cookies is a production foot-gun
@@ -59,3 +63,24 @@ def test_parses_lists_and_booleans() -> None:
 def test_rejects_invalid_values(env: dict[str, str]) -> None:
     with pytest.raises(ConfigError):
         Config.from_env({"TGM_SECRET_KEY": KEY} | env)
+
+
+def test_log_level_is_case_insensitive() -> None:
+    assert Config.from_env({"TGM_SECRET_KEY": KEY, "TGM_LOG_LEVEL": "debug"}).log_level == "DEBUG"
+
+
+def test_misspelt_setting_is_rejected_with_a_suggestion() -> None:
+    with pytest.raises(ConfigError, match=r"TGM_ALLOWED_HOST \(did you mean TGM_ALLOWED_HOSTS\?\)") as raised:
+        Config.from_env({"TGM_SECRET_KEY": KEY, "TGM_ALLOWED_HOST": "manager.example.com"})
+    assert "manager.example.com" not in str(raised.value)  # names only, never values
+
+
+def test_unrelated_and_test_only_variables_are_ignored() -> None:
+    Config.from_env({"TGM_SECRET_KEY": KEY, "PATH": "/usr/bin", "TGM_E2E_BROWSER": "/usr/bin/chromium"})
+
+
+def test_example_file_only_names_real_settings() -> None:
+    example = (Path(__file__).resolve().parent.parent / ".env.example").read_text()
+    named = set(re.findall(r"^#?\s*(TGM_[A-Z_]+)=", example, flags=re.MULTILINE))
+    assert named
+    assert named <= SETTINGS

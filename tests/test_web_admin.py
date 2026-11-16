@@ -112,9 +112,7 @@ async def test_non_admins_cannot_reach_admin_pages(site: Site) -> None:
             page = await browser.get(path)
             assert page.status_code == 403
             assert "You do not have access" in page.text
-        assert (
-            await browser.post("/users", {"username": "x1", "password": NEW_PASSWORD, "role": "admin"})
-        ).status_code == 403
+        assert (await browser.post("/users", {"username": "x1", "password": NEW_PASSWORD, "role": "admin"})).status_code == 403
         nav = (await browser.get("/")).text
         assert 'href="/users"' not in nav
         assert 'href="/audit"' not in nav

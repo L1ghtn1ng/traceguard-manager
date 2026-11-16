@@ -33,7 +33,7 @@ from sqlalchemy import text
 
 from . import __version__, accounts, alerts, audit, charts, fleet, security
 from .config import Config
-from .db import Database
+from .db import Database, SchemaError
 from .errors import DomainError
 from .ingest import SEVERITIES
 from .models import AlertKind, AlertStatus, Role, utcnow
@@ -137,6 +137,17 @@ class PasswordChangeBody:
 
 
 @dataclass(frozen=True, slots=True)
+class Pivot:
+    """An exact-match alert filter the list is narrowed by."""
+
+    name: str
+    label: str
+    text: str
+    value: str
+    remove_url: str
+
+
+@dataclass(frozen=True, slots=True)
 class CurrentUser:
     id: uuid.UUID
     username: str
@@ -178,6 +189,12 @@ def _duration(seconds: int | None) -> str:
 
 def _datetime(value: datetime | None) -> str:
     return "-" if value is None else value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _hour_label(bucket: int | None) -> str | None:
+    if bucket is None:
+        return None
+    return datetime.fromtimestamp(bucket * 3600, tz=UTC).strftime("%Y-%m-%d %H:00 UTC")
 
 
 def _pretty_json(value: Any) -> str:
@@ -265,9 +282,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
             "now": now,
             "ago": lambda value: _ago(value, now),
         }
-        return Response.template(
-            template, templates=app.templates, context=base | context, status_code=status_code
-        )
+        return Response.template(template, templates=app.templates, context=base | context, status_code=status_code)
 
     def error_response(request: Request, status_code: int, detail: str | None = None) -> Response:
         message = detail or STATUS_TEXT.get(status_code, "Request failed")
@@ -347,9 +362,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
             try:
                 now = utcnow()
                 async with database.session() as session:
-                    removed = await alerts.purge_older_than(
-                        session, cutoff=now - timedelta(days=config.alert_retention_days)
-                    )
+                    removed = await alerts.purge_older_than(session, cutoff=now - timedelta(days=config.alert_retention_days))
                     await accounts.purge_expired_sessions(session, config, now=now)
                 if removed:
                     logger.info("retention removed %d alerts", removed)
@@ -360,6 +373,11 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
 
     @app.lifespan
     async def lifespan(_: Flasgo) -> AsyncGenerator[None]:
+        try:
+            await database.check_schema()
+        except SchemaError as error:
+            logger.error("refusing to start: %s", error)
+            raise
         task = asyncio.create_task(run_maintenance(), name="traceguard-manager-maintenance")
         try:
             yield
@@ -396,9 +414,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
         async with database.session() as session:
             result = await accounts.authenticate(session, config, username=username, password=body.password)
             if result.user is not None:
-                token = await accounts.start_session(
-                    session, config, user=result.user, client_ip=request.client_ip
-                )
+                token = await accounts.start_session(session, config, user=result.user, client_ip=request.client_ip)
         await log_action(
             request,
             "auth.login",
@@ -415,6 +431,12 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
         return Response.json({"redirect": target})
 
     # ---- session routes -------------------------------------------------
+
+    @app.get("/auth/session", name="auth-session")
+    @requires()
+    async def session_state(request: Request) -> Response:
+        """Lets an open page tell an ended session apart from a dropped connection."""
+        return Response.json({"username": current(request).username})
 
     @app.post("/auth/logout", name="auth-logout")
     @requires()
@@ -436,9 +458,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
         async with database.session() as session:
             stats = await alerts.dashboard_stats(session, now=now)
             recent, _ = await alerts.list_alerts(session, alerts.AlertFilter(status=AlertStatus.OPEN.value))
-            _, summary = fleet.describe_fleet(
-                await fleet.list_agents(session), now=now, offline_after=offline_after
-            )
+            _, summary = fleet.describe_fleet(await fleet.list_agents(session), now=now, offline_after=offline_after)
         rule_peak = max((count for _, count in stats.top_rules), default=0)
         host_peak = max((count for _, count in stats.top_hosts), default=0)
         return render(
@@ -446,6 +466,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
             "dashboard.html",
             stats=stats,
             recent=recent[:8],
+            can_enrol="agents:write" in current(request).scopes,
             fleet=summary,
             levels=alerts.LEVELS,
             chart=charts.build_timeline(stats),
@@ -464,10 +485,13 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
         kind: Annotated[str | None, Query()] = None,
         agent: Annotated[str | None, Query()] = None,
         q: Annotated[str | None, Query()] = None,
+        rule: Annotated[str | None, Query()] = None,
+        host: Annotated[str | None, Query()] = None,
+        hour: Annotated[int | None, Query()] = None,
         page: Annotated[int, Query()] = 1,
     ) -> Response:
         filters = alerts.AlertFilter.from_params(
-            status=status, level=level, kind=kind, agent=agent, query=q, page=page
+            status=status, level=level, kind=kind, agent=agent, query=q, page=page, rule=rule, host=host, hour=hour
         )
         async with database.session() as session:
             rows, total = await alerts.list_alerts(session, filters)
@@ -478,8 +502,23 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
             "kind": filters.kind,
             "agent": str(filters.agent_id) if filters.agent_id else None,
             "q": filters.query,
+            "rule": filters.rule,
+            "host": filters.host,
+            "hour": str(filters.hour) if filters.hour is not None else None,
         }
         base_query = urlencode({key: value for key, value in params.items() if value})
+        # Exact-match filters have no form control, so each is shown as a chip that removes it.
+        pivot_text = {"rule": filters.rule, "host": filters.host, "hour": _hour_label(filters.hour)}
+
+        def without(name: str) -> str:
+            rest = urlencode({key: value for key, value in params.items() if value and key != name})
+            return f"/alerts?{rest}" if rest else "/alerts"
+
+        pivots = [
+            Pivot(name=name, label=name.capitalize(), text=shown, value=params[name] or "", remove_url=without(name))
+            for name, shown in pivot_text.items()
+            if shown
+        ]
         pages = max((total + alerts.PAGE_SIZE - 1) // alerts.PAGE_SIZE, 1)
         return render(
             request,
@@ -487,6 +526,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
             alerts=rows,
             total=total,
             filters=filters,
+            pivots=pivots,
             agents=agents,
             agent_names={item.id: item.name for item in agents},
             page=filters.page,
@@ -543,13 +583,11 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
 
     @app.get("/agents", name="agents")
     @requires("agents:read")
-    async def agent_list(request: Request) -> Response:
+    async def agent_list(request: Request, enrol: Annotated[str | None, Query()] = None) -> Response:
         now = utcnow()
         async with database.session() as session:
-            views, summary = fleet.describe_fleet(
-                await fleet.list_agents(session), now=now, offline_after=offline_after
-            )
-        return render(request, "agents.html", agents=views, fleet=summary)
+            views, summary = fleet.describe_fleet(await fleet.list_agents(session), now=now, offline_after=offline_after)
+        return render(request, "agents.html", agents=views, fleet=summary, open_enrol=enrol is not None)
 
     @app.get("/agents/<agent_id>", name="agent-detail")
     @requires("agents:read")
@@ -586,9 +624,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
 
     @app.post("/agents/<agent_id>/enabled", name="agent-enabled")
     @requires("agents:write")
-    async def agent_enabled(
-        request: Request, agent_id: str, body: Annotated[AgentEnabledBody, Body()]
-    ) -> Response:
+    async def agent_enabled(request: Request, agent_id: str, body: Annotated[AgentEnabledBody, Body()]) -> Response:
         async with database.session() as session:
             agent = await fleet.get_agent(session, _parse_uuid(agent_id))
             if agent is None:
@@ -619,17 +655,13 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
     @requires("users:manage")
     async def user_create(request: Request, body: Annotated[UserCreateBody, Body()]) -> Response:
         async with database.session() as session:
-            user = await accounts.create_user(
-                session, username=body.username, password=body.password, role=body.role
-            )
+            user = await accounts.create_user(session, username=body.username, password=body.password, role=body.role)
         await log_action(request, "user.create", target=user.username, detail={"role": user.role})
         return Response.json({"id": str(user.id), "username": user.username}, status_code=201)
 
     @app.patch("/users/<user_id>", name="user-update")
     @requires("users:manage")
-    async def user_update(
-        request: Request, user_id: str, body: Annotated[UserUpdateBody, Body()]
-    ) -> Response:
+    async def user_update(request: Request, user_id: str, body: Annotated[UserUpdateBody, Body()]) -> Response:
         async with database.session() as session:
             user = await accounts.get_user(session, _parse_uuid(user_id))
             if user is None:
@@ -645,9 +677,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
 
     @app.post("/users/<user_id>/password", name="user-password")
     @requires("users:manage")
-    async def user_password(
-        request: Request, user_id: str, body: Annotated[PasswordResetBody, Body()]
-    ) -> Response:
+    async def user_password(request: Request, user_id: str, body: Annotated[PasswordResetBody, Body()]) -> Response:
         async with database.session() as session:
             user = await accounts.get_user(session, _parse_uuid(user_id))
             if user is None:
@@ -676,9 +706,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
             if verified:
                 await accounts.change_password(session, user=user, new_password=body.new_password)
                 # Other browsers are signed out; this one keeps working.
-                await accounts.end_all_sessions(
-                    session, user.id, keep_token=token if isinstance(token, str) else None
-                )
+                await accounts.end_all_sessions(session, user.id, keep_token=token if isinstance(token, str) else None)
         await log_action(request, "account.change_password", outcome="success" if verified else "failure")
         if not verified:
             return Response.json({"error": "Current password is incorrect."}, status_code=400)
@@ -689,9 +717,7 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
     async def audit_page(request: Request, page: Annotated[int, Query()] = 1) -> Response:
         page = min(max(page, 1), alerts.MAX_PAGE)
         async with database.session() as session:
-            events, total = await audit.recent(
-                session, limit=AUDIT_PAGE_SIZE, offset=(page - 1) * AUDIT_PAGE_SIZE
-            )
+            events, total = await audit.recent(session, limit=AUDIT_PAGE_SIZE, offset=(page - 1) * AUDIT_PAGE_SIZE)
         pages = max((total + AUDIT_PAGE_SIZE - 1) // AUDIT_PAGE_SIZE, 1)
         return render(request, "audit.html", events=events, total=total, page=page, pages=pages)
 
@@ -708,14 +734,16 @@ def create_web_app(config: Config, database: Database, signal: ChangeSignal) -> 
         if last_event_id:
             with contextlib.suppress(ValueError):
                 cursor = uuid.UUID(last_event_id)
+        if cursor is None:
+            # Fix the starting point before the response begins, so an alert stored
+            # while the stream is still opening is delivered rather than skipped.
+            async with database.session() as session:
+                cursor = await alerts.latest_alert_id(session) or uuid.UUID(int=0)
 
         async def events() -> AsyncIterator[ServerSentEvent]:
             nonlocal live_streams, cursor
             live_streams += 1
             try:
-                if cursor is None:
-                    async with database.session() as session:
-                        cursor = await alerts.latest_alert_id(session) or uuid.UUID(int=0)
                 while True:
                     async with database.session() as session:
                         fresh = await alerts.alerts_after(session, cursor)

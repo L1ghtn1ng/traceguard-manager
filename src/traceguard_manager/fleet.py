@@ -68,17 +68,13 @@ def baseline_policy(agents: list[Agent]) -> str | None:
     return min(digests, key=lambda digest: (-digests[digest], digest))
 
 
-def describe_fleet(
-    agents: list[Agent], *, now: datetime, offline_after: timedelta
-) -> tuple[list[AgentView], FleetSummary]:
+def describe_fleet(agents: list[Agent], *, now: datetime, offline_after: timedelta) -> tuple[list[AgentView], FleetSummary]:
     baseline = baseline_policy(agents)
     views = [
         AgentView(
             agent=agent,
             status=agent_status(agent, now=now, offline_after=offline_after),
-            drifted=bool(
-                agent.enabled and agent.policy_sha256 and baseline and agent.policy_sha256 != baseline
-            ),
+            drifted=bool(agent.enabled and agent.policy_sha256 and baseline and agent.policy_sha256 != baseline),
         )
         for agent in agents
     ]
@@ -135,9 +131,7 @@ def rotate_token(agent: Agent, *, now: datetime) -> str:
 async def agent_for_token(session: AsyncSession, token: str) -> Agent | None:
     if not token.startswith(security.AGENT_TOKEN_PREFIX) or len(token) > 128:
         return None
-    return await session.scalar(
-        select(Agent).where(Agent.token_hash == security.hash_token(token), Agent.enabled.is_(True))
-    )
+    return await session.scalar(select(Agent).where(Agent.token_hash == security.hash_token(token), Agent.enabled.is_(True)))
 
 
 async def store_batch(
@@ -192,13 +186,6 @@ async def store_batch(
         for alert in unique.values()
     ]
     insert = postgresql.insert if dialect == "postgresql" else sqlite.insert
-    statement = (
-        insert(Alert)
-        .values(rows)
-        .on_conflict_do_nothing(index_elements=["agent_id", "fingerprint"])
-        .returning(Alert.id)
-    )
+    statement = insert(Alert).values(rows).on_conflict_do_nothing(index_elements=["agent_id", "fingerprint"]).returning(Alert.id)
     inserted = list(await session.scalars(statement))
-    return StoreResult(
-        stored=len(inserted), duplicates=len(batch.alerts) - len(inserted), new_alert_ids=sorted(inserted)
-    )
+    return StoreResult(stored=len(inserted), duplicates=len(batch.alerts) - len(inserted), new_alert_ids=sorted(inserted))

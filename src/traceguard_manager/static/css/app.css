@@ -610,7 +610,7 @@ a.stat:hover {
   transition: fill 0.12s;
 }
 
-.chart g:hover .chart-slot {
+.chart-hour:hover .chart-slot {
   fill: rgb(255 255 255 / 0.04);
 }
 
@@ -1651,6 +1651,175 @@ a.toast:hover {
   color: transparent;
 }
 
+/* ---- ended session ---------------------------------------------------- */
+
+/* Pinned to the bottom edge so it never covers the page heading or the filters. */
+.session-banner {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-top: 1px solid rgb(246 201 69 / 0.4);
+  background: rgb(38 31 10 / 0.97);
+  box-shadow: 0 -18px 40px -18px rgb(0 0 0 / 0.9);
+  color: #f3d77a;
+  font-weight: 560;
+}
+
+.session-banner:not([hidden]) ~ .toasts {
+  bottom: 76px;
+}
+
+.live[data-state="ended"] {
+  color: var(--warn);
+  border-color: rgb(246 201 69 / 0.35);
+}
+
+.live[data-state="ended"] .live-dot {
+  background: var(--warn);
+}
+
+/* ---- first run -------------------------------------------------------- */
+
+.onboarding {
+  display: grid;
+  gap: 18px;
+  justify-items: start;
+  padding: 22px;
+  border-color: rgb(94 234 212 / 0.3);
+}
+
+.onboarding-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.onboarding-head .empty-icon {
+  flex: none;
+  margin: 0;
+}
+
+.onboarding-head h2 {
+  font-size: 17px;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step);
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.steps span {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+/* ---- exact-match filters ---------------------------------------------- */
+
+.pivots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pivot {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 4px 4px 12px;
+  border: 1px solid rgb(94 234 212 / 0.35);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  font-size: 12.5px;
+}
+
+.pivot-label {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pivot-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.pivot-remove {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.pivot-remove:hover {
+  background: rgb(255 255 255 / 0.1);
+  color: var(--text);
+  text-decoration: none;
+}
+
+a.rank-name {
+  color: var(--text);
+}
+
+a.chart-hour {
+  cursor: pointer;
+}
+
+a.chart-hour:focus-visible {
+  outline: none;
+}
+
+a.chart-hour:focus-visible .chart-slot {
+  fill: rgb(255 255 255 / 0.06);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
 /* ---- responsive ------------------------------------------------------- */
 
 @media (max-width: 1180px) {
@@ -1673,6 +1842,10 @@ a.toast:hover {
 }
 
 @media (max-width: 860px) {
+  .steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .shell {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1722,6 +1895,16 @@ a.toast:hover {
   .kv > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
+  }
+
+  .session-banner {
+    flex-direction: column;
+    gap: 8px;
+    text-align: center;
+  }
+
+  .session-banner:not([hidden]) ~ .toasts {
+    bottom: 124px;
   }
 }
 

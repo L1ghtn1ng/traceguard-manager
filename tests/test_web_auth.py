@@ -75,11 +75,7 @@ async def test_account_locks_after_repeated_failures(site: Site) -> None:
     assert locked.json() == {"error": "Invalid username or password."}
 
     async with site.manager.database.session() as session:
-        await session.execute(
-            update(User)
-            .where(User.username == "analyst")
-            .values(locked_until=utcnow() - timedelta(seconds=1))
-        )
+        await session.execute(update(User).where(User.username == "analyst").values(locked_until=utcnow() - timedelta(seconds=1)))
     assert (await site.browser().login("analyst", ANALYST_PASSWORD)).status_code == 200
 
 
@@ -93,18 +89,14 @@ async def test_login_is_rate_limited_per_client(site: Site) -> None:
 async def test_post_without_csrf_token_is_rejected(site: Site) -> None:
     browser = site.browser()
     await browser.get("/login")
-    response = await browser.send(
-        "POST", "/auth/login", {"username": "admin", "password": ADMIN_PASSWORD}, csrf=False
-    )
+    response = await browser.send("POST", "/auth/login", {"username": "admin", "password": ADMIN_PASSWORD}, csrf=False)
     assert response.status_code == 403
     assert "flasgo-session" not in browser.client.cookies
 
 
 async def test_post_from_another_origin_is_rejected(site: Site) -> None:
     browser = await site.admin()
-    response = await browser.send(
-        "POST", "/alerts/status", {"ids": [], "status": "resolved"}, origin="https://evil.example"
-    )
+    response = await browser.send("POST", "/alerts/status", {"ids": [], "status": "resolved"}, origin="https://evil.example")
     assert response.status_code == 403
 
 
@@ -168,18 +160,14 @@ async def test_login_redirect_target_cannot_leave_the_site(site: Site) -> None:
     assert 'name="next" value="/"' in page.text
 
     await browser.get("/login")
-    response = await browser.post(
-        "/auth/login", {"username": "admin", "password": ADMIN_PASSWORD, "next": "//evil.example"}
-    )
+    response = await browser.post("/auth/login", {"username": "admin", "password": ADMIN_PASSWORD, "next": "//evil.example"})
     assert response.json() == {"redirect": "/"}
 
 
 async def test_login_keeps_a_safe_redirect_target(site: Site) -> None:
     browser = site.browser()
     await browser.get("/login")
-    response = await browser.post(
-        "/auth/login", {"username": "admin", "password": ADMIN_PASSWORD, "next": "/alerts?status=open"}
-    )
+    response = await browser.post("/auth/login", {"username": "admin", "password": ADMIN_PASSWORD, "next": "/alerts?status=open"})
     assert response.json() == {"redirect": "/alerts?status=open"}
 
 
@@ -231,20 +219,14 @@ async def test_change_password_requires_current_and_signs_out_other_sessions(sit
     second = await site.analyst()
     new_password = "a-brand-new-passphrase-77"
 
-    wrong = await first.post(
-        "/account/password", {"current_password": "nope-nope-nope-1", "new_password": new_password}
-    )
+    wrong = await first.post("/account/password", {"current_password": "nope-nope-nope-1", "new_password": new_password})
     assert wrong.status_code == 400
 
-    weak = await first.post(
-        "/account/password", {"current_password": ANALYST_PASSWORD, "new_password": "short"}
-    )
+    weak = await first.post("/account/password", {"current_password": ANALYST_PASSWORD, "new_password": "short"})
     assert weak.status_code == 400
     assert "at least 12" in data(weak)["error"]
 
-    changed = await first.post(
-        "/account/password", {"current_password": ANALYST_PASSWORD, "new_password": new_password}
-    )
+    changed = await first.post("/account/password", {"current_password": ANALYST_PASSWORD, "new_password": new_password})
     assert changed.status_code == 200
     assert (await first.get("/")).status_code == 200  # this browser stays signed in
     assert (await second.get("/")).status_code == 303  # the other one is signed out
@@ -255,8 +237,6 @@ async def test_change_password_requires_current_and_signs_out_other_sessions(sit
 async def test_unknown_json_fields_are_rejected(site: Site) -> None:
     browser = site.browser()
     await browser.get("/login")
-    response = await browser.post(
-        "/auth/login", {"username": "admin", "password": ADMIN_PASSWORD, "is_admin": True}
-    )
+    response = await browser.post("/auth/login", {"username": "admin", "password": ADMIN_PASSWORD, "is_admin": True})
     assert response.status_code == 422
     assert ADMIN_PASSWORD not in response.text

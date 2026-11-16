@@ -31,9 +31,17 @@
       <option value="">Any agent</option>
       {% for agent in agents %}<option value="{{ agent.id }}"{% if filters.agent_id == agent.id %} selected{% endif %}>{{ agent.name }}</option>{% endfor %}
     </select></label>
+  {% for pivot in pivots %}<input type="hidden" name="{{ pivot.name }}" value="{{ pivot.value }}">{% endfor %}
   <button class="btn btn-primary" type="submit">Apply</button>
   <a class="btn btn-ghost" href="/alerts">Reset</a>
 </form>
+{% if pivots %}
+<ul class="pivots" aria-label="Narrowed to" data-testid="pivots">
+  {% for pivot in pivots %}
+  <li class="pivot"><span class="pivot-label">{{ pivot.label }}</span><span class="pivot-text">{{ pivot.text }}</span><a class="pivot-remove" href="{{ pivot.remove_url }}" aria-label="Remove {{ pivot.label | lower }} filter" title="Remove this filter">&times;</a></li>
+  {% endfor %}
+</ul>
+{% endif %}
 
 {% if can_triage %}
 <div class="bulk" id="bulk-bar" hidden>
@@ -61,7 +69,7 @@
         <tr class="row-level-{{ alert.severity | level }}">
           {% if can_triage %}<td class="col-check"><input type="checkbox" class="row-check" value="{{ alert.id }}" aria-label="Select alert"></td>{% endif %}
           <td>{{ ui.level_pill(alert.severity) }}</td>
-          <td class="col-main"><a class="row-link" href="/alerts/{{ alert.id }}">{{ alert.title }}</a>{% if alert.rule_id %}<small>{{ alert.rule_id }}</small>{% endif %}</td>
+          <td class="col-main"><a class="row-link" href="/alerts/{{ alert.id }}">{{ alert.title }}</a>{% if alert.rule_id %}<small><a class="link-quiet" href="/alerts?rule={{ alert.rule_id | urlencode }}" title="Show alerts from this rule">{{ alert.rule_id }}</a></small>{% endif %}</td>
           <td><a class="link-quiet" href="/agents/{{ alert.agent_id }}">{{ agent_names.get(alert.agent_id, alert.hostname) }}</a></td>
           <td>{{ ui.kind_chip(alert.kind) }}</td>
           <td>{{ ui.status_chip(alert.status) }}</td>

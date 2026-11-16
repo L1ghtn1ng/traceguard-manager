@@ -96,9 +96,7 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
                         break
             except urllib.error.URLError, OSError:
                 if time.monotonic() > deadline:
-                    raise RuntimeError(
-                        f"server did not start:\n{(workdir / 'server.log').read_text()}"
-                    ) from None
+                    raise RuntimeError(f"server did not start:\n{(workdir / 'server.log').read_text()}") from None
                 time.sleep(0.1)
         yield Server(url=url)
     finally:

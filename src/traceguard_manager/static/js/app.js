@@ -29,11 +29,55 @@ async function call(method, url, body) {
     // Non-JSON responses fall through to the status handling below.
   }
   if (response.ok) return data;
-  if (response.status === 401 && !url.startsWith("/auth/")) {
-    window.location.assign("/login");
+  // The CSRF token is tied to the session cookie. Once the browser has dropped an expired
+  // cookie the token no longer matches, and the refusal is a bare 403 rather than a 401.
+  const tokenRefused = response.status === 403 && typeof data.error !== "string";
+  if (url !== "/auth/login" && (response.status === 401 || (tokenRefused && (await sessionIsOver())))) {
+    if (url === "/auth/logout") return { redirect: "/login" }; // already signed out
+    sessionEnded();
+    throw new Error("Your session has ended. Sign in again to continue.");
   }
+  if (tokenRefused) throw new Error("This page is out of date. Reload it and try again.");
   if (response.status === 429) throw new Error("Too many attempts. Wait a moment and try again.");
   throw new Error(typeof data.error === "string" ? data.error : "The request failed. Try again.");
+}
+
+// ---- ended sessions -------------------------------------------------------
+
+let liveSource = null;
+let signedOut = false;
+
+function setLiveState(state, label) {
+  const indicator = document.getElementById("live-indicator");
+  if (!indicator) return;
+  indicator.dataset.state = state;
+  indicator.querySelector(".live-label").textContent = label;
+}
+
+// Say so and offer the way back, rather than navigating away from a half-written note.
+function sessionEnded() {
+  if (signedOut) return;
+  signedOut = true;
+  liveSource?.close();
+  const here = window.location.pathname + window.location.search;
+  const target = here === "/" ? "/login" : `/login?next=${encodeURIComponent(here)}`;
+  const banner = document.getElementById("session-banner");
+  if (!banner) {
+    window.location.assign(target);
+    return;
+  }
+  banner.querySelector("a").href = target;
+  banner.hidden = false;
+  setLiveState("ended", "Signed out");
+}
+
+async function sessionIsOver() {
+  try {
+    const response = await fetch("/auth/session", { headers: { accept: "application/json" }, credentials: "same-origin" });
+    return response.status === 401;
+  } catch {
+    return false; // a network failure says nothing about the session
+  }
 }
 
 // ---- toasts ---------------------------------------------------------------
@@ -171,6 +215,23 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  const back = event.target.closest("a[data-back]");
+  if (back) {
+    // Arriving from the list: go back to it as it was, filters and page included.
+    const plainClick = event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+    let from = null;
+    try {
+      from = new URL(document.referrer);
+    } catch {
+      // No referrer: follow the link.
+    }
+    if (plainClick && from && from.origin === window.location.origin && from.pathname === back.pathname) {
+      event.preventDefault();
+      window.history.back();
+    }
+    return;
+  }
+
   const copier = event.target.closest("[data-copy]");
   if (copier) {
     const source = document.querySelector(copier.dataset.copy);
@@ -258,6 +319,10 @@ async function refreshContent() {
   if (!content?.dataset.liveRefresh || userIsBusy()) return;
   try {
     const response = await fetch(window.location.href, { headers: { accept: "text/html" }, credentials: "same-origin" });
+    if (response.redirected && new URL(response.url).pathname === "/login") {
+      sessionEnded();
+      return;
+    }
     if (!response.ok || response.redirected) return;
     const next = new DOMParser().parseFromString(await response.text(), "text/html").getElementById("content");
     if (next && !userIsBusy()) content.replaceChildren(...next.childNodes);
@@ -266,17 +331,21 @@ async function refreshContent() {
   }
 }
 
+const STREAM_RETRY_MS = 15000;
+
 function startLiveUpdates() {
-  if (!document.body.dataset.live || !("EventSource" in window)) return;
-  const indicator = document.getElementById("live-indicator");
-  const setState = (state, label) => {
-    if (!indicator) return;
-    indicator.dataset.state = state;
-    indicator.querySelector(".live-label").textContent = label;
-  };
+  if (!document.body.dataset.live || !("EventSource" in window) || signedOut) return;
   const source = new EventSource("/stream");
-  source.addEventListener("open", () => setState("live", "Live"));
-  source.addEventListener("error", () => setState("idle", "Reconnecting"));
+  liveSource = source;
+  source.addEventListener("open", () => setLiveState("live", "Live"));
+  source.addEventListener("error", async () => {
+    setLiveState("idle", "Reconnecting");
+    // While the browser is still retrying there is nothing to do. It gives up for
+    // good when the server refuses the stream, which is what an ended session does.
+    if (source.readyState !== EventSource.CLOSED || signedOut) return;
+    if (await sessionIsOver()) sessionEnded();
+    else window.setTimeout(startLiveUpdates, STREAM_RETRY_MS);
+  });
   source.addEventListener("alert", (event) => {
     let alert;
     try {
@@ -293,7 +362,15 @@ function startLiveUpdates() {
     window.clearTimeout(refreshTimer);
     refreshTimer = window.setTimeout(refreshContent, 600);
   });
-  window.addEventListener("beforeunload", () => source.close());
+}
+
+window.addEventListener("beforeunload", () => liveSource?.close());
+
+// Opened from a link that asks for a dialog, such as the overview's "Enrol an agent".
+const autoDialog = document.querySelector("dialog[data-auto-open]");
+if (autoDialog) {
+  autoDialog.showModal();
+  window.history.replaceState(null, "", window.location.pathname); // a reload must not reopen it
 }
 
 startLiveUpdates();

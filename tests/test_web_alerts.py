@@ -31,9 +31,7 @@ async def test_alert_list_filters(site: Site) -> None:
     await site.ingest(
         [
             detection("A", detection_message="Reverse shell"),
-            detection(
-                "B", severity="warning", detection_message="Odd cron entry", detection_rule_id="tg-cron"
-            ),
+            detection("B", severity="warning", detection_message="Odd cron entry", detection_rule_id="tg-cron"),
             blocked(),
         ]
     )
@@ -63,9 +61,7 @@ async def test_alert_list_filters(site: Site) -> None:
 
 
 async def test_search_treats_wildcards_and_sql_as_plain_text(site: Site) -> None:
-    await site.ingest(
-        [detection("A", detection_message="100% CPU miner"), detection("B", detection_message="Other")]
-    )
+    await site.ingest([detection("A", detection_message="100% CPU miner"), detection("B", detection_message="Other")])
     browser = await site.viewer()
 
     percent = await browser.get("/alerts?q=%25")
@@ -162,9 +158,7 @@ async def test_analyst_can_triage_and_it_is_audited(site: Site) -> None:
     (alert_id,) = await _alert_ids(site)
     browser = await site.analyst()
 
-    response = await browser.post(
-        "/alerts/status", {"ids": [alert_id], "status": "acknowledged", "note": "Looking into it"}
-    )
+    response = await browser.post("/alerts/status", {"ids": [alert_id], "status": "acknowledged", "note": "Looking into it"})
     assert response.status_code == 200
     assert response.json() == {"changed": 1}
 
@@ -219,9 +213,7 @@ async def test_status_change_validation(site: Site) -> None:
     too_many = await browser.post("/alerts/status", {"ids": [alert_id] * 500, "status": "resolved"})
     assert too_many.status_code == 400
 
-    long_note = await browser.post(
-        "/alerts/status", {"ids": [alert_id], "status": "resolved", "note": "x" * 2001}
-    )
+    long_note = await browser.post("/alerts/status", {"ids": [alert_id], "status": "resolved", "note": "x" * 2001})
     assert long_note.status_code == 400
 
     wrong_type = await browser.post("/alerts/status", {"ids": "nope", "status": "resolved"})

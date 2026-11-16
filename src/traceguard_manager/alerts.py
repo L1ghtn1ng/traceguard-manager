@@ -16,6 +16,10 @@ from .models import Alert, AlertKind, AlertStatus
 PAGE_SIZE = 50
 MAX_PAGE = 2_000
 MAX_SEARCH_LENGTH = 100
+MAX_RULE_LENGTH = 200
+MAX_HOSTNAME_LENGTH = 255
+# Hours since the Unix epoch; the upper bound only keeps the value inside every integer column.
+MAX_HOUR_BUCKET = 10_000_000
 MAX_NOTE_LENGTH = 2_000
 MAX_BULK = 200
 
@@ -54,6 +58,10 @@ class AlertFilter:
     kind: str | None = None
     agent_id: uuid.UUID | None = None
     query: str | None = None
+    # Exact matches, set by following a link from a rule, a host or an hour of the chart.
+    rule: str | None = None
+    host: str | None = None
+    hour: int | None = None
     page: int = 1
 
     @classmethod
@@ -66,6 +74,9 @@ class AlertFilter:
         agent: str | None,
         query: str | None,
         page: int,
+        rule: str | None = None,
+        host: str | None = None,
+        hour: int | None = None,
     ) -> AlertFilter:
         """Build a filter from request parameters; unknown values are dropped, not echoed."""
         agent_id: uuid.UUID | None = None
@@ -81,6 +92,9 @@ class AlertFilter:
             kind=kind if kind in set(AlertKind) else None,
             agent_id=agent_id,
             query=text,
+            rule=(rule or "").strip()[:MAX_RULE_LENGTH] or None,
+            host=(host or "").strip()[:MAX_HOSTNAME_LENGTH] or None,
+            hour=hour if hour is not None and 0 <= hour <= MAX_HOUR_BUCKET else None,
             page=min(max(page, 1), MAX_PAGE),
         )
 
@@ -95,6 +109,12 @@ class AlertFilter:
             clauses.append(Alert.kind == self.kind)
         if self.agent_id:
             clauses.append(Alert.agent_id == self.agent_id)
+        if self.rule:
+            clauses.append(Alert.rule_id == self.rule)
+        if self.host:
+            clauses.append(Alert.hostname == self.host)
+        if self.hour is not None:
+            clauses.append(Alert.hour_bucket == self.hour)
         if self.query:
             # The search term is a bound parameter; escaping only stops it acting as a wildcard.
             pattern = f"%{_escape_like(self.query)}%"
@@ -131,10 +151,7 @@ async def get_alert(session: AsyncSession, alert_id: uuid.UUID) -> Alert | None:
 
 async def recent_for_agent(session: AsyncSession, agent_id: uuid.UUID, *, limit: int = 10) -> list[Alert]:
     rows = await session.scalars(
-        select(Alert)
-        .where(Alert.agent_id == agent_id)
-        .order_by(Alert.occurred_at.desc(), Alert.id.desc())
-        .limit(limit)
+        select(Alert).where(Alert.agent_id == agent_id).order_by(Alert.occurred_at.desc(), Alert.id.desc()).limit(limit)
     )
     return list(rows)
 
@@ -183,6 +200,7 @@ async def purge_older_than(session: AsyncSession, *, cutoff: datetime) -> int:
 
 @dataclass(frozen=True, slots=True)
 class TimelineBar:
+    bucket: int
     label: str
     counts: dict[str, int]
     total: int
@@ -208,9 +226,7 @@ async def dashboard_stats(session: AsyncSession, *, now: datetime) -> DashboardS
 
     open_by_level = dict.fromkeys(LEVELS, 0)
     rows = await session.execute(
-        select(Alert.severity_rank, func.count())
-        .where(Alert.status == AlertStatus.OPEN.value)
-        .group_by(Alert.severity_rank)
+        select(Alert.severity_rank, func.count()).where(Alert.status == AlertStatus.OPEN.value).group_by(Alert.severity_rank)
     )
     for rank, count in rows:
         open_by_level[level_for_rank(rank)] += count
@@ -228,9 +244,7 @@ async def dashboard_stats(session: AsyncSession, *, now: datetime) -> DashboardS
 
     current_bucket = int(now.timestamp()) // 3600
     first_bucket = current_bucket - 23
-    buckets: dict[int, dict[str, int]] = {
-        bucket: dict.fromkeys(LEVELS, 0) for bucket in range(first_bucket, current_bucket + 1)
-    }
+    buckets: dict[int, dict[str, int]] = {bucket: dict.fromkeys(LEVELS, 0) for bucket in range(first_bucket, current_bucket + 1)}
     rows = await session.execute(
         select(Alert.hour_bucket, Alert.severity_rank, func.count())
         .where(Alert.hour_bucket.between(first_bucket, current_bucket))
@@ -240,6 +254,7 @@ async def dashboard_stats(session: AsyncSession, *, now: datetime) -> DashboardS
         buckets[bucket][level_for_rank(rank)] += count
     timeline = [
         TimelineBar(
+            bucket=bucket,
             label=datetime.fromtimestamp(bucket * 3600, tz=now.tzinfo).strftime("%H:00"),
             counts=counts,
             total=sum(counts.values()),

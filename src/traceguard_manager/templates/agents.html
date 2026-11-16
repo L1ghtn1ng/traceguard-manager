@@ -39,7 +39,7 @@
 </section>
 
 {% if "agents:write" in current.scopes %}
-<dialog class="dialog" id="enroll-dialog" aria-labelledby="enroll-title">
+<dialog class="dialog" id="enroll-dialog" aria-labelledby="enroll-title"{% if open_enrol %} data-auto-open{% endif %}>
   <form class="dialog-body form" data-api="/agents" data-method="POST" data-then="token">
     <h2 id="enroll-title">Enrol an agent</h2>
     <p class="muted">Each host gets its own token, so one compromised host can be revoked without touching the rest.</p>

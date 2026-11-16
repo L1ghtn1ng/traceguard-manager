@@ -13,6 +13,10 @@
 </head>
 <body class="shell"{% if current %} data-live="true"{% endif %}>
   <a class="skip-link" href="#content">Skip to content</a>
+  <div class="session-banner" id="session-banner" role="alert" hidden>
+    <span>Your session has ended. Copy anything you still need from this page, then sign in again.</span>
+    <a class="btn btn-sm btn-primary" href="/login">Sign in</a>
+  </div>
   <aside class="sidebar" id="sidebar">
     <a class="brand" href="/">
       <span class="brand-mark">{{ ui.icon("shield") }}</span>

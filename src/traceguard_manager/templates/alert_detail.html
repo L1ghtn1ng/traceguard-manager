@@ -2,7 +2,7 @@
 {% import "_macros.html" as ui %}
 {% block title %}{{ alert.title }}{% endblock %}
 {% block heading %}Alert{% endblock %}
-{% block subheading %}<a class="link-quiet" href="/alerts?status=open">Alerts</a> / {{ alert.id }}{% endblock %}
+{% block subheading %}<a class="link-quiet" href="/alerts?status=open" data-back>Alerts</a> / {{ alert.id }}{% endblock %}
 {% block content %}
 {% set can_triage = "alerts:write" in current.scopes %}
 <section class="card hero hero-{{ alert.severity | level }}">
@@ -12,8 +12,8 @@
   <h2 class="hero-title">{{ alert.title }}</h2>
   <dl class="facts">
     <div><dt>Agent</dt><dd>{% if agent %}<a href="/agents/{{ agent.id }}">{{ agent.name }}</a>{% else %}-{% endif %}</dd></div>
-    <div><dt>Hostname</dt><dd>{{ alert.hostname }}</dd></div>
-    <div><dt>Rule</dt><dd>{% if alert.rule_id %}<code>{{ alert.rule_id }}</code>{% else %}-{% endif %}</dd></div>
+    <div><dt>Hostname</dt><dd><a href="/alerts?host={{ alert.hostname | urlencode }}" title="Show alerts from this host">{{ alert.hostname }}</a></dd></div>
+    <div><dt>Rule</dt><dd>{% if alert.rule_id %}<a href="/alerts?rule={{ alert.rule_id | urlencode }}" title="Show alerts from this rule"><code>{{ alert.rule_id }}</code></a>{% else %}-{% endif %}</dd></div>
     <div><dt>Source event</dt><dd>{{ alert.source_event or "-" }}</dd></div>
     <div><dt>Occurred</dt><dd><time datetime="{{ alert.occurred_at.isoformat() }}">{{ alert.occurred_at | datetime }}</time></dd></div>
     <div><dt>Received</dt><dd>{{ alert.received_at | datetime }}</dd></div>

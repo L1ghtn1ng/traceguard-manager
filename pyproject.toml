@@ -4,37 +4,43 @@ version = "0.1.0"
 description = "Fleet manager and alert console for TraceGuard agents"
 readme = "README.md"
 authors = [
-    { name = "L1ghtn1ng", email = "jay@cybermon.uk" }
+    { name = "Jay Townsend", email = "jay@cybermon.uk" }
 ]
 requires-python = ">=3.14"
 dependencies = [
-    "aiosqlite>=0.22.1",
-    "argon2-cffi>=25.1.0",
-    "asyncpg>=0.32.0",
-    "flasgo[db]>=0.11.1",
-    "sqlalchemy[asyncio]>=2.1.8",
-    "uvicorn>=0.54.0",
+    "aiosqlite==0.22.1",
+    "argon2-cffi==25.1.0",
+    "asyncpg==0.32.0",
+    "flasgo[db]==0.11.1",
+    "sqlalchemy[asyncio]==2.1.8",
+    "uvicorn==0.54.0",
 ]
 
 [project.scripts]
 traceguard-manager = "traceguard_manager.cli:main"
 
 [build-system]
-requires = ["uv_build>=0.13.8,<0.14.0"]
+requires = ["uv_build==0.13.8"]
 build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "pytest>=9.2.0",
-    "pytest-asyncio>=1.5.0",
-    "pytest-playwright>=0.10.0",
-    "ruff>=0.17.5",
-    "ty>=0.0.104",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1.post1",
+    "pytest-playwright==0.10.0",
+    "ruff==0.17.4",
+    "ty==0.0.99",
+    "zizmor==1.32.0",
 ]
+
+[tool.uv]
+# Supply-chain cooldown: never resolve to a release published in the last 7 days.
+# Dependabot applies the same window, so a compromised release has a week to be caught.
+exclude-newer = "7 days"
 
 [tool.ruff]
 target-version = "py314"
-line-length = 110
+line-length = 130
 src = ["src", "tests"]
 extend-exclude = [".claude"]
 
@@ -63,6 +69,12 @@ python-version = "3.14"
 
 [tool.ty.src]
 include = ["src", "tests"]
+
+# Migration settings for the `alembic` command. The database URL comes from
+# TGM_DATABASE_URL (see migrations/env.py), never from this file.
+[tool.alembic]
+script_location = "%(here)s/src/traceguard_manager/migrations"
+file_template = "%%(rev)s_%%(slug)s"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

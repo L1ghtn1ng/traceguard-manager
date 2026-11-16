@@ -25,9 +25,7 @@ async def test_composite_routes_agents_and_browsers_to_the_right_app(site: Site)
 
 async def test_agent_tokens_do_not_open_the_dashboard(site: Site) -> None:
     client = TestClient(site.manager)  # ty: ignore[invalid-argument-type]
-    response = await client.arequest(
-        "GET", "/alerts", headers={"authorization": f"Bearer {site.agent_token}"}
-    )
+    response = await client.arequest("GET", "/alerts", headers={"authorization": f"Bearer {site.agent_token}"})
     assert response.status_code == 401
 
 

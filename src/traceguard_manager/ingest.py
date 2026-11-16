@@ -106,9 +106,7 @@ def parse_batch(payload: object, *, now: datetime) -> ParsedBatch:
         if kind is None:
             batch.ignored += 1
             continue
-        batch.alerts.append(
-            _alert(record, kind=kind, event=event, occurred_at=occurred_at, hostname=hostname)
-        )
+        batch.alerts.append(_alert(record, kind=kind, event=event, occurred_at=occurred_at, hostname=hostname))
     return batch
 
 
@@ -141,16 +139,10 @@ def _classify(event: str, record: dict[str, Any]) -> AlertKind | None:
     return None
 
 
-def _alert(
-    record: dict[str, Any], *, kind: AlertKind, event: str, occurred_at: datetime, hostname: str
-) -> ParsedAlert:
+def _alert(record: dict[str, Any], *, kind: AlertKind, event: str, occurred_at: datetime, hostname: str) -> ParsedAlert:
     canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
     oversized = len(canonical) > MAX_RECORD_BYTES
-    fields = (
-        {"message": record["message"][:MAX_TITLE_LENGTH], "truncated_by_manager": True}
-        if oversized
-        else record
-    )
+    fields = {"message": record["message"][:MAX_TITLE_LENGTH], "truncated_by_manager": True} if oversized else record
 
     alert_id = _text(record.get("alert_id"), 128)
     identity = f"alert:{alert_id}" if kind is AlertKind.DETECTION and alert_id else canonical

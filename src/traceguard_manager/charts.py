@@ -22,6 +22,7 @@ class ChartSegment:
 @dataclass(frozen=True, slots=True)
 class ChartBar:
     x: int
+    bucket: int
     label: str
     total: int
     show_label: bool
@@ -46,6 +47,7 @@ def build_timeline(stats: DashboardStats) -> list[ChartBar]:
         bars.append(
             ChartBar(
                 x=6 + index * SLOT_WIDTH,
+                bucket=hour.bucket,
                 label=hour.label,
                 total=hour.total,
                 show_label=index % 4 == 3,

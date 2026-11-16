@@ -1,5 +1,6 @@
 """Runtime configuration, loaded once from the environment."""
 
+import difflib
 import os
 import secrets
 from collections.abc import Mapping
@@ -10,10 +11,55 @@ _TRUE = frozenset({"1", "true", "yes", "on"})
 _FALSE = frozenset({"0", "false", "no", "off"})
 _ALLOWED_DRIVERS = ("sqlite+aiosqlite://", "postgresql+asyncpg://")
 MIN_SECRET_KEY_LENGTH = 32
+_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+_PREFIX = "TGM_"
+# Every variable the manager reads. Anything else starting with TGM_ is a mistake.
+SETTINGS = frozenset(
+    {
+        "TGM_SECRET_KEY",
+        "TGM_DATABASE_URL",
+        "TGM_ALLOWED_HOSTS",
+        "TGM_CSRF_TRUSTED_ORIGINS",
+        "TGM_DEBUG",
+        "TGM_SECURE_COOKIES",
+        "TGM_LOG_FORMAT",
+        "TGM_LOG_LEVEL",
+        "TGM_SESSION_IDLE_SECONDS",
+        "TGM_SESSION_ABSOLUTE_SECONDS",
+        "TGM_AGENT_OFFLINE_SECONDS",
+        "TGM_LOGIN_MAX_FAILURES",
+        "TGM_LOGIN_LOCKOUT_SECONDS",
+        "TGM_INGEST_MAX_RECORDS",
+        "TGM_INGEST_REQUESTS_PER_MINUTE",
+        "TGM_ALERT_RETENTION_DAYS",
+    }
+)
+# Read by the test suite, never by the manager.
+_TEST_ONLY_PREFIX = "TGM_E2E_"
 
 
 class ConfigError(ValueError):
     """Raised when the environment holds an unusable setting."""
+
+
+def _reject_unknown(env: Mapping[str, str]) -> None:
+    """Refuse a misspelt setting rather than silently running on the default.
+
+    A typo in ``TGM_ALLOWED_HOSTS`` or ``TGM_SECURE_COOKIES`` would otherwise
+    leave a weaker value in force with nothing to show for it. Only names are
+    reported, never values.
+    """
+    unknown = sorted(
+        name for name in env if name.startswith(_PREFIX) and name not in SETTINGS and not name.startswith(_TEST_ONLY_PREFIX)
+    )
+    if not unknown:
+        return
+    parts: list[str] = []
+    for name in unknown:
+        close = difflib.get_close_matches(name, SETTINGS, n=1)
+        parts.append(f"{name} (did you mean {close[0]}?)" if close else name)
+    noun = "setting" if len(parts) == 1 else "settings"
+    raise ConfigError(f"Unknown {noun}: {', '.join(parts)}. Fix the name or remove it.")
 
 
 def _bool(env: Mapping[str, str], name: str, default: bool) -> bool:
@@ -79,13 +125,13 @@ class Config:
             raise ConfigError("TGM_DATABASE_URL must start with sqlite+aiosqlite:// or postgresql+asyncpg://")
         if self.log_format not in {"json", "text"}:
             raise ConfigError("TGM_LOG_FORMAT must be json or text")
+        if self.log_level not in _LOG_LEVELS:
+            raise ConfigError("TGM_LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR or CRITICAL")
         if self.session_idle_seconds > self.session_absolute_seconds:
             raise ConfigError("TGM_SESSION_IDLE_SECONDS must not exceed TGM_SESSION_ABSOLUTE_SECONDS")
         if self.debug and self.secure_cookies:
             # Debug pages expose stack traces; never combine them with a production cookie posture.
-            raise ConfigError(
-                "TGM_DEBUG=true requires TGM_SECURE_COOKIES=false and must not be used in production"
-            )
+            raise ConfigError("TGM_DEBUG=true requires TGM_SECURE_COOKIES=false and must not be used in production")
 
     @property
     def is_sqlite(self) -> bool:
@@ -94,6 +140,7 @@ class Config:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Self:
         env = os.environ if env is None else env
+        _reject_unknown(env)
         secret_key = env.get("TGM_SECRET_KEY", "").strip()
         if not secret_key:
             raise ConfigError(
@@ -111,9 +158,7 @@ class Config:
             secure_cookies=_bool(env, "TGM_SECURE_COOKIES", defaults.secure_cookies),
             log_format=env.get("TGM_LOG_FORMAT", defaults.log_format).strip().lower(),
             log_level=env.get("TGM_LOG_LEVEL", defaults.log_level).strip().upper(),
-            session_idle_seconds=_int(
-                env, "TGM_SESSION_IDLE_SECONDS", defaults.session_idle_seconds, minimum=60, maximum=86_400
-            ),
+            session_idle_seconds=_int(env, "TGM_SESSION_IDLE_SECONDS", defaults.session_idle_seconds, minimum=60, maximum=86_400),
             session_absolute_seconds=_int(
                 env,
                 "TGM_SESSION_ABSOLUTE_SECONDS",
@@ -124,15 +169,11 @@ class Config:
             agent_offline_seconds=_int(
                 env, "TGM_AGENT_OFFLINE_SECONDS", defaults.agent_offline_seconds, minimum=30, maximum=86_400
             ),
-            login_max_failures=_int(
-                env, "TGM_LOGIN_MAX_FAILURES", defaults.login_max_failures, minimum=3, maximum=20
-            ),
+            login_max_failures=_int(env, "TGM_LOGIN_MAX_FAILURES", defaults.login_max_failures, minimum=3, maximum=20),
             login_lockout_seconds=_int(
                 env, "TGM_LOGIN_LOCKOUT_SECONDS", defaults.login_lockout_seconds, minimum=60, maximum=86_400
             ),
-            ingest_max_records=_int(
-                env, "TGM_INGEST_MAX_RECORDS", defaults.ingest_max_records, minimum=1, maximum=5_000
-            ),
+            ingest_max_records=_int(env, "TGM_INGEST_MAX_RECORDS", defaults.ingest_max_records, minimum=1, maximum=5_000),
             ingest_requests_per_minute=_int(
                 env,
                 "TGM_INGEST_REQUESTS_PER_MINUTE",
@@ -140,9 +181,7 @@ class Config:
                 minimum=1,
                 maximum=100_000,
             ),
-            alert_retention_days=_int(
-                env, "TGM_ALERT_RETENTION_DAYS", defaults.alert_retention_days, minimum=1, maximum=3_650
-            ),
+            alert_retention_days=_int(env, "TGM_ALERT_RETENTION_DAYS", defaults.alert_retention_days, minimum=1, maximum=3_650),
         )
 
     @classmethod
