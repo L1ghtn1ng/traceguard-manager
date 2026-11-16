@@ -1,7 +1,5 @@
 """The server refuses to start against a database that has not been migrated."""
 
-from pathlib import Path
-
 import pytest
 from flasgo import TestClient
 from sqlalchemy import text
@@ -54,10 +52,10 @@ async def test_application_startup_fails_without_a_schema(config: Config) -> Non
 
 
 def test_migrate_then_serve_check_passes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    config: Config, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("TGM_SECRET_KEY", "k" * 48)
-    monkeypatch.setenv("TGM_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'cli.db'}")
+    monkeypatch.setenv("TGM_DATABASE_URL", config.database_url)
     served: list[bool] = []
     monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: served.append(True))
 

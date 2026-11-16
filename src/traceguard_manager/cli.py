@@ -5,6 +5,7 @@ import asyncio
 import getpass
 import sys
 from collections.abc import Sequence
+from datetime import timedelta
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -115,7 +116,13 @@ async def _demo_data(config: Config, *, remove: bool, force: bool) -> None:
                 await audit.record(session, actor="cli", action="demo.remove", detail={"agents": removed})
                 report = f"Removed {removed} sample agent(s) and their alerts."
             else:
-                summary = await demo.seed(session, now=utcnow(), dialect=database.dialect, force=force)
+                summary = await demo.seed(
+                    session,
+                    now=utcnow(),
+                    dialect=database.dialect,
+                    offline_after=timedelta(seconds=config.agent_offline_seconds),
+                    force=force,
+                )
                 await audit.record(
                     session, actor="cli", action="demo.seed", detail={"agents": summary.agents, "alerts": summary.alerts}
                 )

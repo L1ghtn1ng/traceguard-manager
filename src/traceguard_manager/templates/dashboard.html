@@ -3,7 +3,7 @@
 {% block title %}Overview{% endblock %}
 {% block heading %}Overview{% endblock %}
 {% block subheading %}Open alerts and fleet health at a glance{% endblock %}
-{% block content_attrs %} data-live-refresh="true"{% endblock %}
+{% block content_attrs %} data-live-refresh="true" data-refresh-every="60"{% endblock %}
 {% block content %}
 {% if fleet.total == 0 %}
 <section class="card onboarding" data-testid="onboarding">
@@ -26,7 +26,7 @@
   <a class="stat stat-accent" href="/alerts?status=open">
     <span class="stat-label">Open alerts</span>
     <strong class="stat-value" data-testid="open-alerts">{{ stats.open_total }}</strong>
-    <span class="stat-foot">{{ stats.acknowledged_total }} acknowledged · {{ stats.resolved_24h }} resolved in 24h</span>
+    <span class="stat-foot">{{ stats.unassigned_open }} without an owner · {{ stats.acknowledged_total }} acknowledged</span>
   </a>
   <a class="stat stat-critical" href="/alerts?status=open&level=critical">
     <span class="stat-label">Critical</span>
@@ -49,7 +49,7 @@
   <header class="card-head">
     <div>
       <h2>Alerts in the last 24 hours</h2>
-      <p class="muted">{{ stats.last_24h }} total · busiest hour {{ stats.timeline_peak }} · times in UTC</p>
+      <p class="muted">{{ stats.last_24h }} total · busiest hour {{ stats.timeline_peak }} · <span data-zone-note>times in UTC</span></p>
     </div>
     <ul class="legend">
       {% for level in levels %}<li><span class="legend-swatch level-{{ level }}"></span>{{ level }}</li>{% endfor %}
@@ -67,7 +67,7 @@
       {% for segment in bar.segments %}
       <rect class="chart-bar level-{{ segment.level }}" x="{{ bar.x }}" y="{{ segment.y }}" width="19" height="{{ segment.height }}" rx="2.5"/>
       {% endfor %}
-      {% if bar.show_label %}<text class="chart-label" x="{{ bar.x + 9.5 }}" y="184" text-anchor="middle">{{ bar.label }}</text>{% endif %}
+      {% if bar.show_label %}<text class="chart-label" x="{{ bar.x + 9.5 }}" y="184" text-anchor="middle" data-hour="{{ bar.bucket }}">{{ bar.label }}</text>{% endif %}
     {% if bar.total %}</a>{% else %}</g>{% endif %}
     {% endfor %}
   </svg>
@@ -89,7 +89,7 @@
             <strong>{{ alert.title }}</strong>
             <small>{{ alert.hostname }}{% if alert.rule_id %} · {{ alert.rule_id }}{% endif %}</small>
           </span>
-          <span class="feed-side">{{ ui.level_pill(alert.severity) }}<time datetime="{{ alert.occurred_at.isoformat() }}" title="{{ alert.occurred_at | datetime }}">{{ ago(alert.occurred_at) }}</time></span>
+          <span class="feed-side">{{ ui.level_pill(alert.severity) }}{{ ui.when(alert.occurred_at) }}</span>
         </a>
       </li>
       {% endfor %}
@@ -109,7 +109,7 @@
       {% if stats.top_rules %}
       <ul class="rank">
         {% for name, count, width in top_rules %}
-        <li><a class="rank-name" href="/alerts?rule={{ name | urlencode }}" title="Show alerts from {{ name }}">{{ name }}</a><span class="rank-count">{{ count }}</span>
+        <li><a class="rank-name" href="/alerts?range=7d&amp;rule={{ name | urlencode }}" title="Show alerts from {{ name }}">{{ name }}</a><span class="rank-count">{{ count }}</span>
           <svg class="rank-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="rank-track" width="100" height="6" rx="3"/><rect class="rank-fill" width="{{ width }}" height="6" rx="3"/></svg></li>
         {% endfor %}
       </ul>
@@ -120,7 +120,7 @@
       {% if stats.top_hosts %}
       <ul class="rank">
         {% for name, count, width in top_hosts %}
-        <li><a class="rank-name" href="/alerts?host={{ name | urlencode }}" title="Show alerts from {{ name }}">{{ name }}</a><span class="rank-count">{{ count }}</span>
+        <li><a class="rank-name" href="/alerts?range=7d&amp;host={{ name | urlencode }}" title="Show alerts from {{ name }}">{{ name }}</a><span class="rank-count">{{ count }}</span>
           <svg class="rank-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="rank-track" width="100" height="6" rx="3"/><rect class="rank-fill rank-fill-alt" width="{{ width }}" height="6" rx="3"/></svg></li>
         {% endfor %}
       </ul>

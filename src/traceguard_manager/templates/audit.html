@@ -4,26 +4,50 @@
 {% block heading %}Audit log{% endblock %}
 {% block subheading %}{{ total }} recorded actions{% endblock %}
 {% block content %}
+<form class="filters card" method="get" action="/audit" role="search">
+  <label class="search">
+    {{ ui.icon("search") }}
+    <input class="input" type="search" name="actor" value="{{ search.actor or '' }}" placeholder="Who (exact username)" maxlength="64" aria-label="Actor" data-search>
+  </label>
+  <label class="select"><span class="sr-only">Action</span>
+    <select name="action" aria-label="Action">
+      <option value="">Any action</option>
+      {% for value in actions %}<option value="{{ value }}"{% if search.action == value %} selected{% endif %}>{{ value }}</option>{% endfor %}
+    </select></label>
+  <label class="select"><span class="sr-only">Outcome</span>
+    <select name="outcome" aria-label="Outcome">
+      <option value="">Any outcome</option>
+      {% for value in ("success", "failure", "challenge") %}<option value="{{ value }}"{% if search.outcome == value %} selected{% endif %}>{{ value | capitalize }}</option>{% endfor %}
+    </select></label>
+  <label class="select"><span class="sr-only">Time</span>
+    <select name="range" aria-label="Time">
+      <option value="">Any time</option>
+      {% for value, label in ranges.items() %}<option value="{{ value }}"{% if search.time_range == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></label>
+  <button class="btn btn-primary" type="submit">Apply</button>
+  <a class="btn btn-ghost" href="/audit">Reset</a>
+</form>
 <section class="card card-flush">
   {% if events %}
   <div class="table-wrap">
     <table class="table" data-testid="audit-table">
-      <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Source IP</th></tr></thead>
+      <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Source IP</th><th>Detail</th></tr></thead>
       <tbody>
         {% for event in events %}
         <tr>
-          <td><time title="{{ ago(event.at) }}">{{ event.at | datetime }}</time></td>
-          <td class="col-main"><span class="row-link">{{ event.actor }}</span></td>
+          <td>{{ ui.stamp(event.at) }}</td>
+          <td class="col-main"><a class="row-link" href="/audit?actor={{ event.actor | urlencode }}" title="Show everything {{ event.actor }} did">{{ event.actor }}</a></td>
           <td><code>{{ event.action }}</code></td>
           <td>{{ event.target or "-" }}</td>
-          <td>{% if event.outcome == "success" %}<span class="chip status-resolved">success</span>{% else %}<span class="chip status-open">{{ event.outcome }}</span>{% endif %}</td>
+          <td>{% if event.outcome == "success" %}<span class="chip status-resolved">success</span>{% elif event.outcome == "challenge" %}<span class="chip status-acknowledged">challenge</span>{% else %}<span class="chip status-open">{{ event.outcome }}</span>{% endif %}</td>
           <td>{{ event.client_ip or "-" }}</td>
+          <td>{% if event.detail %}<details class="audit-detail"><summary>View</summary><pre><code>{{ event.detail | pretty_json }}</code></pre>{% if event.request_id %}<small class="muted">request {{ event.request_id }}</small>{% endif %}</details>{% else %}<span class="muted">-</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-  {% else %}<div class="empty"><h3>No audit events yet</h3></div>{% endif %}
+  {% else %}<div class="empty"><h3>Nothing matches</h3><p class="muted">No recorded action fits these filters.</p></div>{% endif %}
 </section>
-{{ ui.pagination("/audit", page, pages, "") }}
+{{ ui.pagination("/audit", page, pages, base_query) }}
 {% endblock %}

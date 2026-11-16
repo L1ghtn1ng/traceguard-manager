@@ -6,6 +6,7 @@ protection does not apply here; the dashboard keeps CSRF fully enabled.
 """
 
 import logging
+from datetime import timedelta
 
 from flasgo import Flasgo, HasScope, IsAuthenticated, Request, Response, User, abort, bearer_token_backend
 
@@ -41,6 +42,8 @@ def create_api_app(config: Config, database: Database, signal: ChangeSignal) -> 
         }
     )
 
+    offline_after = timedelta(seconds=config.agent_offline_seconds)
+
     async def validate_token(token: str) -> User | None:
         async with database.session() as session:
             agent = await fleet.agent_for_token(session, token)
@@ -50,7 +53,7 @@ def create_api_app(config: Config, database: Database, signal: ChangeSignal) -> 
             id=str(agent.id),
             is_authenticated=True,
             scopes=frozenset({INGEST_SCOPE}),
-            data={"agent_id": agent.id, "name": agent.name},
+            data={"agent_id": agent.id, "name": agent.name, "last_seen_at": agent.last_seen_at},
         )
 
     app.register_auth_backend("agent", bearer_token_backend(validate_token))
@@ -79,6 +82,9 @@ def create_api_app(config: Config, database: Database, signal: ChangeSignal) -> 
             result = await fleet.store_batch(
                 session, agent_id=user.data["agent_id"], batch=batch, now=now, dialect=database.dialect
             )
+            last_seen = user.data["last_seen_at"]
+            if last_seen is not None and now - last_seen > offline_after:
+                await fleet.resolve_offline_alerts(session, agent_id=user.data["agent_id"], now=now)
         if result.stored:
             signal.notify()
         if batch.invalid:

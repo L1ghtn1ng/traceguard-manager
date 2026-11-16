@@ -72,6 +72,8 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
         "TGM_SECURE_COOKIES": "false",
         "TGM_LOG_FORMAT": "text",
         "TGM_LOG_LEVEL": "WARNING",
+        # Every browser here shares one address, so the suite needs more sign-ins than one person would.
+        "TGM_LOGIN_REQUESTS_PER_MINUTE": "100",
     }
     _cli(env, "migrate")
     for role, (username, password) in USERS.items():

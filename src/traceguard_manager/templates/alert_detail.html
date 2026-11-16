@@ -3,6 +3,13 @@
 {% block title %}{{ alert.title }}{% endblock %}
 {% block heading %}Alert{% endblock %}
 {% block subheading %}<a class="link-quiet" href="/alerts?status=open" data-back>Alerts</a> / {{ alert.id }}{% endblock %}
+{% block actions %}
+<span class="detail-nav" data-alert-nav="{{ alert.id }}" hidden>
+  <a class="btn btn-sm btn-ghost" data-nav="previous" title="Previous alert in the list (k)">{{ ui.icon("left") }} Previous</a>
+  <span class="muted small" data-nav="position"></span>
+  <a class="btn btn-sm btn-ghost" data-nav="next" title="Next alert in the list (j)">Next {{ ui.icon("right") }}</a>
+</span>
+{% endblock %}
 {% block content %}
 {% set can_triage = "alerts:write" in current.scopes %}
 <section class="card hero hero-{{ alert.severity | level }}">
@@ -15,53 +22,146 @@
     <div><dt>Hostname</dt><dd><a href="/alerts?host={{ alert.hostname | urlencode }}" title="Show alerts from this host">{{ alert.hostname }}</a></dd></div>
     <div><dt>Rule</dt><dd>{% if alert.rule_id %}<a href="/alerts?rule={{ alert.rule_id | urlencode }}" title="Show alerts from this rule"><code>{{ alert.rule_id }}</code></a>{% else %}-{% endif %}</dd></div>
     <div><dt>Source event</dt><dd>{{ alert.source_event or "-" }}</dd></div>
-    <div><dt>Occurred</dt><dd><time datetime="{{ alert.occurred_at.isoformat() }}">{{ alert.occurred_at | datetime }}</time></dd></div>
-    <div><dt>Received</dt><dd>{{ alert.received_at | datetime }}</dd></div>
+    <div><dt>Occurred</dt><dd>{{ ui.stamp(alert.occurred_at) }}</dd></div>
+    <div><dt>Received</dt><dd>{{ ui.stamp(alert.received_at) }}</dd></div>
+    <div><dt>Owner</dt><dd data-testid="alert-owner">{{ owner.username if owner else "Nobody yet" }}</dd></div>
   </dl>
   {% if alert.mitre_tactics or alert.mitre_techniques or alert.tags %}
   <div class="tag-rows">
-    {% if alert.mitre_tactics %}<div><span class="tag-label">MITRE tactics</span><span>{% for item in alert.mitre_tactics %}<span class="tag tag-mitre">{{ item }}</span>{% endfor %}</span></div>{% endif %}
-    {% if alert.mitre_techniques %}<div><span class="tag-label">Techniques</span><span>{% for item in alert.mitre_techniques %}<span class="tag tag-mitre">{{ item }}</span>{% endfor %}</span></div>{% endif %}
-    {% if alert.tags %}<div><span class="tag-label">Tags</span><span>{% for item in alert.tags %}<span class="tag">{{ item }}</span>{% endfor %}</span></div>{% endif %}
+    {% if alert.mitre_tactics %}<div><span class="tag-label">MITRE tactics</span><span>{% for item in alert.mitre_tactics %}<a class="tag tag-mitre" href="/alerts?tactic={{ item | urlencode }}" title="Show alerts with this tactic">{{ item }}</a>{% endfor %}</span></div>{% endif %}
+    {% if alert.mitre_techniques %}<div><span class="tag-label">Techniques</span><span>{% for item in alert.mitre_techniques %}<a class="tag tag-mitre" href="/alerts?technique={{ item | urlencode }}" title="Show alerts with this technique">{{ item }}</a>{% endfor %}</span></div>{% endif %}
+    {% if alert.tags %}<div><span class="tag-label">Tags</span><span>{% for item in alert.tags %}<a class="tag" href="/alerts?tag={{ item | urlencode }}" title="Show alerts with this tag">{{ item }}</a>{% endfor %}</span></div>{% endif %}
   </div>
   {% endif %}
 </section>
 
-<div class="grid-2 grid-2-wide">
-  <section class="card">
-    <header class="card-head"><div><h2>Event details</h2><p class="muted">Fields reported by the agent</p></div></header>
-    {% if details %}
-    <dl class="kv">
-      {% for key, value in details %}<div><dt>{{ key }}</dt><dd>{{ value }}</dd></div>{% endfor %}
-    </dl>
-    {% else %}<p class="muted pad">No additional fields.</p>{% endif %}
-    <details class="raw">
-      <summary>Raw record</summary>
-      <pre><code>{{ alert.fields | pretty_json }}</code></pre>
-    </details>
-  </section>
+{% if muted_by %}
+<p class="callout" data-testid="muted-by">{{ ui.icon("mute") }}<span>Alerts like this are muted{% if muted_by[0].expires_at %} until {{ ui.stamp(muted_by[0].expires_at) }}{% endif %} by {{ muted_by[0].created_by }}: {{ muted_by[0].reason }} <a href="/mutes">Mute rules</a></span></p>
+{% endif %}
 
-  <section class="card">
-    <header class="card-head"><div><h2>Triage</h2>
-      <p class="muted">{% if alert.status_changed_by %}{{ alert.status | capitalize }} by {{ alert.status_changed_by }} · {{ ago(alert.status_changed_at) }}{% else %}Not yet reviewed{% endif %}</p></div></header>
-    {% if can_triage %}
-    <form class="form pad" data-api="/alerts/status" data-method="POST" data-then="reload" data-status-form>
-      <input type="hidden" name="ids" value="{{ alert.id }}" data-json-list>
-      <label class="field"><span>Note</span>
-        <textarea class="input" name="note" rows="4" maxlength="2000" placeholder="What did you find? What was done?">{{ alert.note or "" }}</textarea></label>
-      <p class="form-error" role="alert" hidden></p>
-      <div class="btn-row">
-        {% if alert.status != "acknowledged" %}<button class="btn" type="submit" name="status" value="acknowledged">Acknowledge</button>{% endif %}
-        {% if alert.status != "resolved" %}<button class="btn btn-primary" type="submit" name="status" value="resolved">Resolve</button>{% endif %}
-        {% if alert.status != "open" %}<button class="btn btn-ghost" type="submit" name="status" value="open">Reopen</button>{% endif %}
+<div class="grid-2 grid-2-wide">
+  <div class="stack">
+    <section class="card">
+      <header class="card-head"><div><h2>Event details</h2><p class="muted">Fields reported by the agent</p></div></header>
+      {% if details %}
+      <dl class="kv">
+        {% for key, value in details %}<div><dt>{{ key }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+      </dl>
+      {% else %}<p class="muted pad">No additional fields.</p>{% endif %}
+      <details class="raw">
+        <summary>Raw record</summary>
+        <button class="btn btn-sm btn-ghost raw-copy" type="button" data-copy="#raw-record">{{ ui.icon("copy") }} Copy</button>
+        <pre><code id="raw-record">{{ alert.fields | pretty_json }}</code></pre>
+      </details>
+    </section>
+
+    <section class="card">
+      <header class="card-head"><div><h2>Related</h2><p class="muted">The same rule elsewhere, and what else this host reported within the hour</p></div></header>
+      {% if related.same_rule or related.same_host %}
+      {% if related.same_rule %}
+      <h3 class="list-head">Same rule{% if related.same_rule_total > related.same_rule | length %} · <a href="/alerts?rule={{ alert.rule_id | urlencode }}">all {{ related.same_rule_total }}</a>{% endif %}</h3>
+      <ul class="feed feed-compact">
+        {% for item in related.same_rule %}
+        <li><a class="feed-item" href="/alerts/{{ item.id }}"><span class="feed-bar level-{{ item.severity | level }}"></span>
+          <span class="feed-main"><strong>{{ item.hostname }}</strong><small>{{ item.title }}</small></span>
+          <span class="feed-side">{{ ui.status_chip(item.status) }}{{ ui.when(item.occurred_at) }}</span></a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if related.same_host %}
+      <h3 class="list-head">Same host, within the hour</h3>
+      <ul class="feed feed-compact">
+        {% for item in related.same_host %}
+        <li><a class="feed-item" href="/alerts/{{ item.id }}"><span class="feed-bar level-{{ item.severity | level }}"></span>
+          <span class="feed-main"><strong>{{ item.title }}</strong><small>{{ item.kind | replace("_", " ") }}{% if item.rule_id %} · {{ item.rule_id }}{% endif %}</small></span>
+          <span class="feed-side">{{ ui.status_chip(item.status) }}{{ ui.when(item.occurred_at) }}</span></a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% else %}<p class="muted pad">Nothing else from this rule, and nothing else from this host within the hour.</p>{% endif %}
+    </section>
+  </div>
+
+  <div class="stack">
+    <section class="card">
+      <header class="card-head"><div><h2>Triage</h2>
+        <p class="muted">{% if alert.status_changed_by %}{{ alert.status | capitalize }} by {{ alert.status_changed_by }} · {{ ui.when(alert.status_changed_at) }}{% else %}Not yet reviewed{% endif %}</p></div>
+        {% if can_triage %}<button class="btn btn-sm btn-ghost" type="button" data-open-dialog="mute-dialog" title="Stop alerts like this from appearing">{{ ui.icon("mute") }} Mute</button>{% endif %}
+      </header>
+      {% if can_triage %}
+      <div class="pad field-row">
+        <label class="field field-inline"><span>Owner</span>
+          <span class="select"><select data-submit="/alerts/assign" data-field="assignee" data-body='{{ {"ids": [alert.id | string]} | tojson }}' data-then="reload" aria-label="Owner">
+            <option value="">Nobody</option>
+            {% for user in owners %}<option value="{{ user.id }}"{% if alert.assignee_id == user.id %} selected{% endif %}>{{ user.username }}{% if user.id == current.id %} (me){% endif %}</option>{% endfor %}
+          </select></span></label>
+        {% if alert.assignee_id != current.id %}<button class="btn btn-sm" type="button" data-post="/alerts/assign" data-body='{{ {"ids": [alert.id | string], "assignee": "me"} | tojson }}' data-then="reload" data-shortcut="m">Assign to me</button>{% endif %}
       </div>
-    </form>
-    {% else %}
-    <div class="pad">
-      {% if alert.note %}<p class="note">{{ alert.note }}</p>{% else %}<p class="muted">No note recorded.</p>{% endif %}
-      <p class="muted small">Your role is read-only. Ask an analyst or administrator to triage this alert.</p>
-    </div>
-    {% endif %}
-  </section>
+      <form class="form pad" data-api="/alerts/status" data-method="POST" data-then="reload" data-status-form>
+        <input type="hidden" name="ids" value="{{ alert.id }}" data-json-list>
+        <label class="field"><span>Note</span>
+          <textarea class="input" name="note" rows="3" maxlength="2000" placeholder="What did you find? What was done?"></textarea></label>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="btn-row">
+          <button class="btn btn-ghost" type="submit">Add note</button>
+          {% if alert.status != "acknowledged" %}<button class="btn" type="submit" name="status" value="acknowledged" data-shortcut="a">Acknowledge</button>{% endif %}
+          {% if alert.status != "resolved" %}<button class="btn btn-primary" type="submit" name="status" value="resolved" data-shortcut="r">Resolve</button>{% endif %}
+          {% if alert.status != "open" %}<button class="btn btn-ghost" type="submit" name="status" value="open" data-shortcut="o">Reopen</button>{% endif %}
+        </div>
+      </form>
+      {% else %}
+      <p class="muted small pad">Your role is read-only. Ask an analyst or administrator to triage this alert.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <header class="card-head"><div><h2>History</h2><p class="muted">Every status change, note and change of owner</p></div></header>
+      {% if history %}
+      <ol class="timeline" data-testid="alert-history">
+        {% for event in history %}
+        <li>
+          <p><strong>{{ event.actor }}</strong>
+            {% if event.action == "status" %}moved this to <span class="chip status-{{ event.status }}">{{ event.status }}</span>
+            {% elif event.action == "assign" %}{% if event.assignee %}gave this to <strong>{{ event.assignee }}</strong>{% else %}removed the owner{% endif %}
+            {% else %}added a note{% endif %}
+            <span class="muted">· {{ ui.when(event.at) }}</span></p>
+          {% if event.note %}<p class="note">{{ event.note }}</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="muted pad">{% if alert.note %}{{ alert.note }}{% else %}Nothing has been done with this alert yet.{% endif %}</p>
+      {% endif %}
+    </section>
+  </div>
 </div>
+
+{% if can_triage %}
+<dialog class="dialog" id="mute-dialog" aria-labelledby="mute-title">
+  <form class="dialog-body form" data-api="/mutes" data-method="POST" data-then="reload">
+    <h2 id="mute-title">Mute alerts like this</h2>
+    <p class="muted">Muted alerts are still recorded, but they stay out of the open list, the live toasts and notifications. Open ones that match are muted now.</p>
+    <input type="hidden" name="alert_id" value="{{ alert.id }}">
+    <label class="field"><span>What to mute</span>
+      <span class="select"><select name="scope">
+        {% if alert.rule_id %}
+        <option value="rule_host">{{ alert.rule_id }} on {{ alert.hostname }} only</option>
+        <option value="rule">{{ alert.rule_id }} on every host</option>
+        {% endif %}
+        <option value="host">Everything from {{ alert.hostname }}</option>
+      </select></span></label>
+    <label class="field"><span>For how long</span>
+      <span class="select"><select name="duration">
+        {% for value, label in mute_durations.items() %}<option value="{{ value }}"{% if value == "24h" %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></span></label>
+    <label class="field"><span>Reason</span>
+      <input class="input" type="text" name="reason" maxlength="500" placeholder="Known maintenance job, ticket OPS-123" required></label>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" type="button" data-close-dialog>Cancel</button>
+      <button class="btn btn-primary" type="submit">Mute</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 {% endblock %}

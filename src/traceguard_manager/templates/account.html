@@ -4,16 +4,65 @@
 {% block heading %}Account{% endblock %}
 {% block subheading %}Signed in as {{ current.username }} · {{ current.role }}{% endblock %}
 {% block content %}
-<section class="card card-narrow">
-  <header class="card-head"><div><h2>Change password</h2><p class="muted">Other browsers signed in to this account are signed out.</p></div></header>
-  <form class="form pad" data-api="/account/password" data-method="POST" data-then="toast" data-toast="Password changed." data-reset="true">
-    <label class="field"><span>Current password</span>
-      <input class="input" type="password" name="current_password" maxlength="128" autocomplete="current-password" required></label>
-    <label class="field"><span>New password</span>
-      <input class="input" type="password" name="new_password" minlength="{{ min_length }}" maxlength="128" autocomplete="new-password" required>
-      <small class="muted">At least {{ min_length }} characters. Long passphrases work well.</small></label>
-    <p class="form-error" role="alert" hidden></p>
-    <div class="btn-row"><button class="btn btn-primary" type="submit">Update password</button></div>
-  </form>
-</section>
+{% if current.must_change %}
+<p class="callout callout-warn" data-testid="must-change">{{ ui.icon("lock") }}<span>Your password was set by an administrator. Choose your own to continue; nothing else is available until you do.</span></p>
+{% endif %}
+<div class="grid-2">
+  <div class="stack">
+    <section class="card">
+      <header class="card-head"><div><h2>Change password</h2><p class="muted">Other browsers signed in to this account are signed out.</p></div></header>
+      <form class="form pad" data-api="/account/password" data-method="POST" data-then="{{ "redirect" if current.must_change else "toast" }}" data-toast="Password changed." data-reset="true">
+        <label class="field"><span>Current password</span>
+          <input class="input" type="password" name="current_password" maxlength="128" autocomplete="current-password" required></label>
+        <label class="field"><span>New password</span>
+          <input class="input" type="password" name="new_password" minlength="{{ min_length }}" maxlength="128" autocomplete="new-password" required>
+          <small class="muted">At least {{ min_length }} characters. Long passphrases work well.</small></label>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="btn-row"><button class="btn btn-primary" type="submit">Update password</button></div>
+      </form>
+    </section>
+
+    {% if not current.must_change %}
+    <section class="card" data-testid="two-step">
+      <header class="card-head"><div><h2>Two-step sign-in</h2>
+        <p class="muted">{% if two_step_on %}On since {{ ui.stamp(two_step_since) }} · {{ recovery_codes_left }} recovery {{ "code" if recovery_codes_left == 1 else "codes" }} left{% else %}Ask for a code from an authenticator app as well as your password.{% endif %}</p></div>
+        {% if two_step_on %}<span class="chip status-resolved">on</span>{% else %}<span class="chip chip-quiet">off</span>{% endif %}
+      </header>
+      <form class="form pad" data-api="/account/two-step/{{ "disable" if two_step_on else "start" }}" data-method="POST" data-then="{{ "reload" if two_step_on else "redirect" }}">
+        <label class="field"><span>Current password</span>
+          <input class="input" type="password" name="current_password" maxlength="128" autocomplete="current-password" required>
+          <small class="muted">{% if two_step_on %}Confirm it is you before turning this off.{% else %}Confirm it is you before setting this up.{% endif %}</small></label>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="btn-row"><button class="btn{% if not two_step_on %} btn-primary{% endif %}" type="submit">{{ "Turn off" if two_step_on else "Set up two-step sign-in" }}</button></div>
+      </form>
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <section class="card">
+      <header class="card-head"><div><h2>Where you are signed in</h2><p class="muted">A session ends after a while without use.</p></div>
+        {% if sessions | length > 1 %}<button class="btn btn-sm" type="button" data-post="/account/sessions/end-others" data-then="reload" data-confirm="Sign out every other browser?">Sign out the others</button>{% endif %}
+      </header>
+      <ul class="sessions" data-testid="sessions">
+        {% for item in sessions %}
+        <li>
+          <div><strong>{{ item.client_ip or "Unknown address" }}</strong>{% if item.token_hash == current_session_hash %} <span class="chip status-resolved">this browser</span>{% endif %}
+            <small class="muted">{{ item.user_agent or "Unknown browser" }}</small>
+            <small class="muted">Signed in {{ ui.when(item.created_at) }} · last used {{ ui.when(item.last_seen_at) }}</small></div>
+          {% if item.token_hash != current_session_hash %}<button class="btn btn-sm btn-ghost" type="button" data-post="/account/sessions/{{ item.id }}" data-method="DELETE" data-then="reload">Sign out</button>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="card" data-desktop-notifications hidden>
+      <header class="card-head"><div><h2>Desktop notifications</h2><p class="muted" data-notify-state>Show new alerts as notifications from this browser while a dashboard tab is open.</p></div></header>
+      <div class="pad btn-row">
+        <button class="btn" type="button" data-notify-toggle>Turn on</button>
+        <label class="check"><input type="checkbox" data-notify-critical> Critical and high only</label>
+      </div>
+    </section>
+  </div>
+</div>
 {% endblock %}

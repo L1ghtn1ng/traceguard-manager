@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import false as sa_false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
@@ -61,12 +62,22 @@ class AlertKind(enum.StrEnum):
     WOULD_BLOCK = "would_block"
     RESPONSE = "response"
     AGENT_ERROR = "agent_error"
+    # Raised by the manager itself when an agent stops reporting.
+    AGENT_OFFLINE = "agent_offline"
 
 
 class AlertStatus(enum.StrEnum):
     OPEN = "open"
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
+    # Stored because a mute rule matched: kept for the record, out of the way.
+    MUTED = "muted"
+
+
+class ChannelKind(enum.StrEnum):
+    WEBHOOK = "webhook"
+    SLACK = "slack"
+    EMAIL = "email"
 
 
 class User(Base):
@@ -82,6 +93,14 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     password_changed_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    # Set when someone else chose the password; cleared when the user sets their own.
+    must_change_password: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
+    totp_secret: Mapped[str | None] = mapped_column(String(64))
+    totp_enabled_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
+    # The last accepted time step, so a code cannot be replayed inside its window.
+    totp_last_step: Mapped[int | None] = mapped_column(BigInteger)
+    # SHA-256 digests of unused one-time recovery codes.
+    recovery_codes: Mapped[list[str]] = mapped_column(default=list, server_default="[]")
 
     sessions: Mapped[list[UserSession]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
@@ -98,6 +117,7 @@ class UserSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(UtcDateTime)
     client_ip: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(200))
 
     user: Mapped[User] = relationship(back_populates="sessions")
 
@@ -127,6 +147,7 @@ class Agent(Base):
     detection_rules: Mapped[int | None] = mapped_column()
     unavailable_hooks: Mapped[list[str]] = mapped_column(default=list)
     events_received: Mapped[int] = mapped_column(BigInteger, default=0)
+    tags: Mapped[list[str]] = mapped_column(default=list, server_default="[]")
 
     alerts: Mapped[list[Alert]] = relationship(back_populates="agent", cascade="all, delete-orphan")
 
@@ -164,8 +185,67 @@ class Alert(Base):
     status_changed_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     status_changed_by: Mapped[str | None] = mapped_column(String(64))
     note: Mapped[str | None] = mapped_column(Text)
+    assignee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_alerts_assignee_id_users"), index=True
+    )
+    # When a notification pass picked this alert up; claimed once across all workers.
+    notified_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
     agent: Mapped[Agent] = relationship(back_populates="alerts")
+    assignee: Mapped[User | None] = relationship()
+    events: Mapped[list[AlertEvent]] = relationship(back_populates="alert", cascade="all, delete-orphan")
+
+
+class AlertEvent(Base):
+    """One entry in an alert's history: a status change, a note, or a change of owner."""
+
+    __tablename__ = "alert_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    alert_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("alerts.id", ondelete="CASCADE"), index=True)
+    at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    actor: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(16))  # status | note | assign
+    status: Mapped[str | None] = mapped_column(String(16))
+    assignee: Mapped[str | None] = mapped_column(String(64))
+    note: Mapped[str | None] = mapped_column(Text)
+
+    alert: Mapped[Alert] = relationship(back_populates="events")
+
+
+class MuteRule(Base):
+    """Silences new alerts from a rule, a host, or a rule on one host."""
+
+    __tablename__ = "mute_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    rule_id: Mapped[str | None] = mapped_column(String(200), index=True)
+    hostname: Mapped[str | None] = mapped_column(String(255))
+    reason: Mapped[str] = mapped_column(String(500))
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
+
+
+class NotificationChannel(Base):
+    """Somewhere new alerts are sent: a webhook, a chat webhook, or email."""
+
+    __tablename__ = "notification_channels"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    # A URL or a list of addresses. Webhook URLs are credentials, so pages only show the host.
+    target: Mapped[str] = mapped_column(Text)
+    # Signs webhook bodies. Kept readable because every delivery needs it.
+    secret: Mapped[str | None] = mapped_column(String(128))
+    min_level: Mapped[str] = mapped_column(String(16), default="high")
+    enabled: Mapped[bool] = mapped_column(default=True)
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    last_success_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
+    last_error_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
+    last_error: Mapped[str | None] = mapped_column(String(300))
 
 
 class AuditEvent(Base):

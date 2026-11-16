@@ -1,7 +1,10 @@
 """Agent enrolment, heartbeat tracking, and storage of ingested batches."""
 
+import hashlib
+import re
 import uuid
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -9,10 +12,21 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import security
+from . import mutes, security
 from .errors import DomainError
 from .ingest import ParsedBatch, severity_rank
-from .models import Agent, Alert, AlertStatus, new_id
+from .models import Agent, Alert, AlertKind, AlertStatus, new_id
+
+PAGE_SIZE = 50
+MAX_PAGE = 2_000
+MAX_TAGS = 16
+TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,31}")
+STATUSES: tuple[str, ...] = ("online", "degraded", "offline", "pending", "disabled")
+SORTS: tuple[str, ...] = ("name", "status", "seen", "host")
+# Worst first, so sorting by status puts what needs attention at the top.
+_STATUS_ORDER = {"offline": 0, "degraded": 1, "pending": 2, "online": 3, "disabled": 4}
+# An agent that has been silent for longer than this is old news, not a new outage.
+OFFLINE_ALERT_WINDOW = timedelta(days=1)
 
 
 class FleetError(DomainError):
@@ -92,6 +106,105 @@ def describe_fleet(agents: list[Agent], *, now: datetime, offline_after: timedel
     return views, summary
 
 
+@dataclass(frozen=True, slots=True)
+class FleetQuery:
+    """How the fleet page is searched, filtered, sorted and paged."""
+
+    text: str | None = None
+    status: str | None = None
+    tag: str | None = None
+    sort: str = "name"
+    descending: bool = False
+    page: int = 1
+
+    @classmethod
+    def from_params(cls, params: Mapping[str, object]) -> FleetQuery:
+        def text(name: str, limit: int) -> str | None:
+            value = params.get(name)
+            return (value.strip()[:limit] or None) if isinstance(value, str) else None
+
+        status, sort, tag = text("status", 16), text("sort", 16), text("tag", 32)
+        page = params.get("page")
+        return cls(
+            text=text("q", 100),
+            status=status if status in STATUSES else None,
+            tag=tag if tag and TAG_RE.fullmatch(tag) else None,
+            sort=sort if sort in SORTS else "name",
+            descending=text("dir", 4) == "desc",
+            page=min(max(page, 1), MAX_PAGE) if isinstance(page, int) and not isinstance(page, bool) else 1,
+        )
+
+    def to_query(self) -> dict[str, str]:
+        values = {
+            "q": self.text,
+            "status": self.status,
+            "tag": self.tag,
+            "sort": self.sort if self.sort != "name" else None,
+            "dir": "desc" if self.descending else None,
+        }
+        return {key: value for key, value in values.items() if value}
+
+
+def select_views(views: Sequence[AgentView], query: FleetQuery) -> tuple[list[AgentView], int]:
+    """Apply a fleet query. Status is derived from time, so this runs here rather than in SQL."""
+    needle = query.text.lower() if query.text else None
+    chosen = [
+        view
+        for view in views
+        if (query.status is None or view.status == query.status)
+        and (query.tag is None or query.tag in view.agent.tags)
+        and (
+            needle is None
+            or needle in view.agent.name.lower()
+            or needle in (view.agent.hostname or "").lower()
+            or any(needle in tag.lower() for tag in view.agent.tags)
+        )
+    ]
+    keys = {
+        "name": lambda view: view.agent.name.lower(),
+        "status": lambda view: (_STATUS_ORDER[view.status], view.agent.name.lower()),
+        "host": lambda view: ((view.agent.hostname or "").lower(), view.agent.name.lower()),
+        # Never-seen agents sort as the oldest.
+        "seen": lambda view: (view.agent.last_seen_at is not None, view.agent.last_seen_at or view.agent.created_at),
+    }
+    chosen.sort(key=keys[query.sort], reverse=query.descending)
+    start = (query.page - 1) * PAGE_SIZE
+    return chosen[start : start + PAGE_SIZE], len(chosen)
+
+
+def all_tags(agents: Sequence[Agent]) -> list[str]:
+    return sorted({tag for agent in agents for tag in agent.tags})
+
+
+def parse_tags(text: str) -> list[str]:
+    """Split a comma or space separated list into tags, rejecting anything unusual."""
+    tags: list[str] = []
+    for raw in re.split(r"[,\s]+", text.strip()):
+        if not raw:
+            continue
+        if not TAG_RE.fullmatch(raw):
+            raise FleetError("Tags are 1-32 characters: letters, digits, dot, dash, colon or underscore.")
+        if raw not in tags:
+            tags.append(raw)
+    if len(tags) > MAX_TAGS:
+        raise FleetError(f"An agent can have at most {MAX_TAGS} tags.")
+    return tags
+
+
+async def update_agent(session: AsyncSession, agent: Agent, *, name: str | None, tags: list[str] | None) -> None:
+    """Rename an agent or replace its tags. Its token and history are untouched."""
+    if name is not None:
+        name = name.strip()
+        if not security.AGENT_NAME_RE.fullmatch(name):
+            raise FleetError("Agent name must be 1-100 characters: letters, digits, dot, dash or underscore.")
+        if name != agent.name and await session.scalar(select(Agent.id).where(Agent.name == name)) is not None:
+            raise FleetError("An agent with that name already exists.")
+        agent.name = name
+    if tags is not None:
+        agent.tags = tags
+    session.add(agent)
+
+
 async def list_agents(session: AsyncSession) -> list[Agent]:
     return list(await session.scalars(select(Agent).order_by(Agent.name)))
 
@@ -113,6 +226,7 @@ async def enroll_agent(session: AsyncSession, *, name: str) -> tuple[Agent, str]
         token_hash=security.hash_token(token),
         token_prefix=security.token_display_prefix(token),
         unavailable_hooks=[],
+        tags=[],
     )
     session.add(agent)
     await session.flush()
@@ -162,6 +276,7 @@ async def store_batch(
     unique = {alert.fingerprint: alert for alert in batch.alerts}
     if not unique:
         return StoreResult(stored=0, duplicates=0, new_alert_ids=[])
+    muted = await mutes.active(session, now=now)
     rows = [
         {
             "id": new_id(),
@@ -181,7 +296,11 @@ async def store_batch(
             "mitre_tactics": alert.mitre_tactics,
             "mitre_techniques": alert.mitre_techniques,
             "fields": alert.fields,
-            "status": AlertStatus.OPEN.value,
+            "status": (
+                AlertStatus.MUTED.value
+                if mutes.matches(muted, rule_id=alert.rule_id, hostname=alert.hostname)
+                else AlertStatus.OPEN.value
+            ),
         }
         for alert in unique.values()
     ]
@@ -189,3 +308,73 @@ async def store_batch(
     statement = insert(Alert).values(rows).on_conflict_do_nothing(index_elements=["agent_id", "fingerprint"]).returning(Alert.id)
     inserted = list(await session.scalars(statement))
     return StoreResult(stored=len(inserted), duplicates=len(batch.alerts) - len(inserted), new_alert_ids=sorted(inserted))
+
+
+async def raise_offline_alerts(session: AsyncSession, *, now: datetime, offline_after: timedelta, dialect: str) -> int:
+    """Open one alert for each agent that has just gone quiet. Returns how many were new.
+
+    The fingerprint is the moment the agent was last heard from, so repeated
+    passes, and passes from other worker processes, add nothing.
+    """
+    silent = list(
+        await session.scalars(
+            select(Agent).where(
+                Agent.enabled.is_(True),
+                Agent.last_seen_at.is_not(None),
+                Agent.last_seen_at < now - offline_after,
+                Agent.last_seen_at > now - offline_after - OFFLINE_ALERT_WINDOW,
+            )
+        )
+    )
+    if not silent:
+        return 0
+    muted = await mutes.active(session, now=now)
+    rows = []
+    for agent in silent:
+        assert agent.last_seen_at is not None  # guaranteed by the query
+        hostname = agent.hostname or agent.name
+        rows.append(
+            {
+                "id": new_id(),
+                "agent_id": agent.id,
+                "fingerprint": hashlib.sha256(f"offline:{agent.last_seen_at.isoformat()}".encode()).hexdigest(),
+                "kind": AlertKind.AGENT_OFFLINE.value,
+                "severity": "error",
+                "severity_rank": severity_rank("error"),
+                "title": f"Agent {agent.name} stopped reporting",
+                "rule_id": None,
+                "source_event": None,
+                "hostname": hostname,
+                "occurred_at": now,
+                "received_at": now,
+                "hour_bucket": int(now.timestamp()) // 3600,
+                "tags": [],
+                "mitre_tactics": [],
+                "mitre_techniques": [],
+                "fields": {"agent": agent.name, "last_seen_at": agent.last_seen_at.isoformat()},
+                "status": (
+                    AlertStatus.MUTED.value if mutes.matches(muted, rule_id=None, hostname=hostname) else AlertStatus.OPEN.value
+                ),
+            }
+        )
+    insert = postgresql.insert if dialect == "postgresql" else sqlite.insert
+    statement = insert(Alert).values(rows).on_conflict_do_nothing(index_elements=["agent_id", "fingerprint"]).returning(Alert.id)
+    return len(list(await session.scalars(statement)))
+
+
+async def resolve_offline_alerts(session: AsyncSession, *, agent_id: uuid.UUID, now: datetime) -> None:
+    """Close an agent's open "stopped reporting" alerts once it is heard from again."""
+    await session.execute(
+        update(Alert)
+        .where(
+            Alert.agent_id == agent_id,
+            Alert.kind == AlertKind.AGENT_OFFLINE.value,
+            Alert.status.in_([AlertStatus.OPEN.value, AlertStatus.ACKNOWLEDGED.value]),
+        )
+        .values(
+            status=AlertStatus.RESOLVED.value,
+            status_changed_at=now,
+            status_changed_by="system",
+            note="The agent is reporting again.",
+        )
+    )

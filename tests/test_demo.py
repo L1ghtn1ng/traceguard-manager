@@ -26,7 +26,7 @@ def test_records_are_repeatable_and_all_valid() -> None:
         assert batch.ignored == 0, host
         assert batch.heartbeat is not None, host
         kinds |= {alert.kind for alert in batch.alerts}
-    assert kinds == set(AlertKind)  # every alert type has an example
+    assert kinds == set(AlertKind) - {AlertKind.AGENT_OFFLINE}  # every type an agent can report has an example
 
 
 async def test_seed_fills_every_fleet_state_and_alert_status(config: Config) -> None:
@@ -35,7 +35,8 @@ async def test_seed_fills_every_fleet_state_and_alert_status(config: Config) -> 
         await database.create_all()
         async with database.session() as session:
             summary = await demo.seed(session, now=NOW, dialect=database.dialect)
-        assert summary.alerts == demo.RECENT_ALERTS + demo.OLDER_ALERTS
+        # Everything the hosts reported, plus the alert raised for the host that went quiet.
+        assert summary.alerts == demo.RECENT_ALERTS + demo.OLDER_ALERTS + 1
 
         async with database.session() as session:
             _, fleet_summary = fleet.describe_fleet(
@@ -45,7 +46,7 @@ async def test_seed_fills_every_fleet_state_and_alert_status(config: Config) -> 
         assert fleet_summary.total == summary.agents
         assert (fleet_summary.online, fleet_summary.degraded, fleet_summary.offline, fleet_summary.pending) == (3, 1, 1, 1)
         assert fleet_summary.drifted == 1
-        assert set(statuses) == {status.value for status in AlertStatus}
+        assert set(statuses) == {status.value for status in AlertStatus}  # including muted, from the sample mute rule
 
         async with database.session() as session:
             with pytest.raises(demo.DemoError, match="already present"):

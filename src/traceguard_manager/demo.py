@@ -12,13 +12,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import alerts, fleet
+from . import alerts, fleet, mutes
 from .errors import DomainError
 from .ingest import parse_batch
-from .models import Agent, AlertStatus
+from .models import Agent, AlertStatus, MuteRule
 
 DEMO_PREFIX = "demo-"
 RECENT_ALERTS = 90  # spread over the last 24 hours, so the chart has a shape
@@ -49,6 +49,10 @@ HOSTS: tuple[DemoHost, ...] = (
     DemoHost("demo-edge-01", seen_ago=timedelta(hours=3), weight=1),
 )
 PENDING_HOST = "demo-new-01"  # enrolled, never connected
+DEMO_ACTOR = "demo"
+# One mute rule, so the muted status and the mute page have something in them.
+MUTED_RULE = "tg-new-setuid-binary"
+MUTED_HOST = "demo-build-01"
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +218,9 @@ async def _demo_agents(session: AsyncSession) -> list[Agent]:
     return list(await session.scalars(select(Agent).where(Agent.name.startswith(DEMO_PREFIX, autoescape=True))))
 
 
-async def seed(session: AsyncSession, *, now: datetime, dialect: str, force: bool = False) -> DemoSummary:
+async def seed(
+    session: AsyncSession, *, now: datetime, dialect: str, offline_after: timedelta = timedelta(minutes=15), force: bool = False
+) -> DemoSummary:
     """Create the demo fleet and its alerts.
 
     Refuses to mix sample alerts into a database that already has real agents
@@ -229,6 +235,16 @@ async def seed(session: AsyncSession, *, now: datetime, dialect: str, force: boo
             "Sample alerts would be mixed in with real ones; pass --force if that is what you want."
         )
 
+    await mutes.create(
+        session,
+        rule_id=MUTED_RULE,
+        hostname=MUTED_HOST,
+        reason="Expected: package builds install setuid helpers.",
+        duration="forever",
+        actor=DEMO_ACTOR,
+        now=now,
+    )
+    await session.flush()
     stored = 0
     new_ids: list[uuid.UUID] = []
     records = build_records(now=now)
@@ -241,6 +257,8 @@ async def seed(session: AsyncSession, *, now: datetime, dialect: str, force: boo
         stored += result.stored
         new_ids += result.new_alert_ids
     await fleet.enroll_agent(session, name=PENDING_HOST)
+    # The host that went quiet gets the alert the manager raises for that.
+    stored += await fleet.raise_offline_alerts(session, now=now, offline_after=offline_after, dialect=dialect)
 
     # Leave most alerts open, with some already worked, so every status has rows.
     rng = random.Random(len(new_ids))  # noqa: S311 - sample data, not a security decision
@@ -252,7 +270,7 @@ async def seed(session: AsyncSession, *, now: datetime, dialect: str, force: boo
     ):
         for start in range(0, len(ids), alerts.MAX_BULK):
             await alerts.set_status(
-                session, alert_ids=ids[start : start + alerts.MAX_BULK], status=status.value, actor="demo", note=note, now=now
+                session, alert_ids=ids[start : start + alerts.MAX_BULK], status=status.value, actor=DEMO_ACTOR, note=note, now=now
             )
     return DemoSummary(agents=len(HOSTS) + 1, alerts=stored)
 
@@ -262,4 +280,5 @@ async def remove(session: AsyncSession) -> int:
     agents = await _demo_agents(session)
     for agent in agents:
         await session.delete(agent)
+    await session.execute(delete(MuteRule).where(MuteRule.created_by == DEMO_ACTOR))
     return len(agents)

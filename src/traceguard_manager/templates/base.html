@@ -26,10 +26,14 @@
       <a class="nav-link{% if path == '/' %} is-active{% endif %}" href="/"{% if path == '/' %} aria-current="page"{% endif %}>{{ ui.icon("overview") }}<span>Overview</span></a>
       <a class="nav-link{% if path.startswith('/alerts') %} is-active{% endif %}" href="/alerts?status=open"{% if path.startswith('/alerts') %} aria-current="page"{% endif %}>{{ ui.icon("alerts") }}<span>Alerts</span></a>
       <a class="nav-link{% if path.startswith('/agents') %} is-active{% endif %}" href="/agents"{% if path.startswith('/agents') %} aria-current="page"{% endif %}>{{ ui.icon("fleet") }}<span>Fleet</span></a>
-      {% if current and ("users:manage" in current.scopes or "audit:read" in current.scopes) %}
+      <a class="nav-link{% if path.startswith('/mutes') %} is-active{% endif %}" href="/mutes"{% if path.startswith('/mutes') %} aria-current="page"{% endif %}>{{ ui.icon("mute") }}<span>Mute rules</span></a>
+      {% if current and ("users:manage" in current.scopes or "audit:read" in current.scopes or "notify:manage" in current.scopes) %}
       <span class="nav-heading">Administration</span>
       {% if "users:manage" in current.scopes %}
       <a class="nav-link{% if path.startswith('/users') %} is-active{% endif %}" href="/users"{% if path.startswith('/users') %} aria-current="page"{% endif %}>{{ ui.icon("users") }}<span>Users</span></a>
+      {% endif %}
+      {% if "notify:manage" in current.scopes %}
+      <a class="nav-link{% if path.startswith('/notifications') %} is-active{% endif %}" href="/notifications"{% if path.startswith('/notifications') %} aria-current="page"{% endif %}>{{ ui.icon("bell") }}<span>Notifications</span></a>
       {% endif %}
       {% if "audit:read" in current.scopes %}
       <a class="nav-link{% if path.startswith('/audit') %} is-active{% endif %}" href="/audit"{% if path.startswith('/audit') %} aria-current="page"{% endif %}>{{ ui.icon("audit") }}<span>Audit log</span></a>
@@ -56,6 +60,7 @@
       </div>
       <div class="topbar-actions">
         {% block actions %}{% endblock %}
+        <button class="icon-btn" type="button" data-open-dialog="shortcuts-dialog" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">{{ ui.icon("keyboard") }}</button>
         <span class="live" id="live-indicator" data-state="idle" title="Live updates"><span class="live-dot"></span><span class="live-label">Offline</span></span>
       </div>
     </header>
@@ -73,6 +78,23 @@
         <button class="btn btn-danger" value="confirm" id="confirm-accept">Confirm</button>
       </div>
     </form>
+  </dialog>
+  <dialog class="dialog" id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+    <div class="dialog-body">
+      <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+      <dl class="shortcuts">
+        <div><dt><kbd>g</kbd> then <kbd>o</kbd> / <kbd>a</kbd> / <kbd>f</kbd></dt><dd>Go to overview, alerts, fleet</dd></div>
+        <div><dt><kbd>/</kbd></dt><dd>Search this page</dd></div>
+        <div><dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next or previous alert</dd></div>
+        <div><dt><kbd>Enter</kbd></dt><dd>Open the highlighted alert</dd></div>
+        <div><dt><kbd>x</kbd></dt><dd>Select the highlighted alert</dd></div>
+        <div><dt><kbd>a</kbd> <kbd>r</kbd> <kbd>o</kbd></dt><dd>Acknowledge, resolve, reopen</dd></div>
+        <div><dt><kbd>m</kbd></dt><dd>Assign to me</dd></div>
+        <div><dt><kbd>u</kbd></dt><dd>Back to the list from an alert</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>Show this list</dd></div>
+      </dl>
+      <div class="dialog-actions"><button class="btn btn-primary" type="button" data-close-dialog>Close</button></div>
+    </div>
   </dialog>
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 </body>

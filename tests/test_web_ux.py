@@ -91,8 +91,9 @@ async def test_overview_and_detail_link_to_narrowed_lists(site: Site) -> None:
 
     overview = await browser.get("/")
     hour = int(datetime.now(UTC).timestamp()) // 3600
-    assert 'href="/alerts?rule=tg%20odd%26rule%3D1"' in overview.text  # encoded, so it cannot add parameters
-    assert 'href="/alerts?host=web-01"' in overview.text
+    # Encoded, so the rule cannot add parameters; limited to the 7 days the overview counts.
+    assert 'href="/alerts?range=7d&amp;rule=tg%20odd%26rule%3D1"' in overview.text
+    assert 'href="/alerts?range=7d&amp;host=web-01"' in overview.text
     assert f'href="/alerts?hour={hour}"' in overview.text or f'href="/alerts?hour={hour - 1}"' in overview.text
     assert overview.text.count('<a class="chart-hour"') == 1  # empty hours are not links
 

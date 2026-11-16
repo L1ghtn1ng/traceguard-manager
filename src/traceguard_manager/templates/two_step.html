@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Two-step sign-in{% endblock %}
+{% block heading %}Set up two-step sign-in{% endblock %}
+{% block subheading %}<a class="link-quiet" href="/account">Account</a> / Two-step sign-in{% endblock %}
+{% block content %}
+<section class="card card-narrow">
+  <ol class="setup">
+    <li><strong>Scan this with an authenticator app</strong>
+      <span class="muted">Any app that supports time-based codes works.</span>
+      <div class="qr" data-testid="two-step-qr">{{ qr }}</div>
+      <span class="muted">Cannot scan it? Type this key instead:</span>
+      <code class="secret" data-testid="two-step-secret">{{ secret }}</code></li>
+    <li><strong>Enter the code the app shows</strong>
+      <form class="form" data-api="/account/two-step/confirm" data-method="POST" data-then="recovery">
+        <label class="field"><span class="sr-only">6-digit code</span>
+          <input class="input input-code" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" placeholder="123456" required autofocus></label>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="btn-row"><button class="btn btn-primary" type="submit">Turn on</button><a class="btn btn-ghost" href="/account">Cancel</a></div>
+      </form></li>
+  </ol>
+</section>
+
+<dialog class="dialog" id="recovery-dialog" aria-labelledby="recovery-title">
+  <div class="dialog-body">
+    <h2 id="recovery-title">Save your recovery codes</h2>
+    <p class="callout callout-warn">Each code signs you in once if you lose your phone. They are shown only now; keep them somewhere safe, away from your password.</p>
+    <pre class="snippet"><code id="recovery-codes" data-testid="recovery-codes"></code></pre>
+    <div class="dialog-actions">
+      <button class="btn" type="button" data-copy="#recovery-codes">{{ ui.icon("copy") }} Copy</button>
+      <a class="btn btn-primary" href="/account">I have saved them</a>
+    </div>
+  </div>
+</dialog>
+{% endblock %}

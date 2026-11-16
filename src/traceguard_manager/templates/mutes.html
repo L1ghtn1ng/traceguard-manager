@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Mute rules{% endblock %}
+{% block heading %}Mute rules{% endblock %}
+{% block subheading %}{{ rules | length }} active{% endblock %}
+{% block actions %}
+{% if "alerts:write" in current.scopes %}<button class="btn btn-primary" type="button" data-open-dialog="mute-dialog">{{ ui.icon("plus") }} Add mute rule</button>{% endif %}
+{% endblock %}
+{% block content %}
+<p class="callout">{{ ui.icon("mute") }}<span>A muted alert is still recorded, with the status <em>muted</em>, but stays out of the open list, the live toasts and notifications. Choose <a href="/alerts?status=muted">Muted</a> in the alert list to see them.</span></p>
+<section class="card card-flush">
+  {% if rules %}
+  <div class="table-wrap">
+    <table class="table" data-testid="mutes-table">
+      <thead><tr><th>Rule</th><th>Host</th><th>Reason</th><th>Added by</th><th>Expires</th><th class="col-actions">Actions</th></tr></thead>
+      <tbody>
+        {% for rule in rules %}
+        <tr>
+          <td class="col-main">{% if rule.rule_id %}<a class="row-link" href="/alerts?status=muted&amp;rule={{ rule.rule_id | urlencode }}"><code>{{ rule.rule_id }}</code></a>{% else %}<span class="muted">any rule</span>{% endif %}</td>
+          <td>{{ rule.hostname or "every host" }}</td>
+          <td>{{ rule.reason }}</td>
+          <td>{{ rule.created_by }} · {{ ui.when(rule.created_at) }}</td>
+          <td>{% if rule.expires_at %}{{ ui.stamp(rule.expires_at) }}{% else %}when removed{% endif %}</td>
+          <td class="col-actions">{% if "alerts:write" in current.scopes %}<button class="btn btn-sm btn-ghost" type="button" data-post="/mutes/{{ rule.id }}" data-method="DELETE" data-then="reload" data-confirm="Remove this mute rule? New matching alerts will appear again. Alerts already muted stay muted.">Remove</button>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><span class="empty-icon">{{ ui.icon("mute") }}</span><h3>Nothing is muted</h3><p class="muted">Mute a noisy rule from any of its alerts, or add a rule here.</p></div>
+  {% endif %}
+</section>
+
+{% if "alerts:write" in current.scopes %}
+<dialog class="dialog" id="mute-dialog" aria-labelledby="mute-title">
+  <form class="dialog-body form" data-api="/mutes" data-method="POST" data-then="reload">
+    <h2 id="mute-title">Add a mute rule</h2>
+    <p class="muted">Fill in a rule, a host, or both. Leaving one empty matches every value.</p>
+    <label class="field"><span>Rule ID</span>
+      <input class="input" type="text" name="rule_id" maxlength="200" placeholder="tg-mining-pool-dns" autofocus></label>
+    <label class="field"><span>Hostname</span>
+      <input class="input" type="text" name="hostname" maxlength="255" placeholder="build-01"></label>
+    <label class="field"><span>For how long</span>
+      <span class="select"><select name="duration">
+        {% for value, label in durations.items() %}<option value="{{ value }}"{% if value == "24h" %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></span></label>
+    <label class="field"><span>Reason</span>
+      <input class="input" type="text" name="reason" maxlength="500" required></label>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" type="button" data-close-dialog>Cancel</button>
+      <button class="btn btn-primary" type="submit">Mute</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+{% endblock %}

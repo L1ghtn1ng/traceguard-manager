@@ -29,13 +29,23 @@ SETTINGS = frozenset(
         "TGM_AGENT_OFFLINE_SECONDS",
         "TGM_LOGIN_MAX_FAILURES",
         "TGM_LOGIN_LOCKOUT_SECONDS",
+        "TGM_LOGIN_REQUESTS_PER_MINUTE",
         "TGM_INGEST_MAX_RECORDS",
         "TGM_INGEST_REQUESTS_PER_MINUTE",
         "TGM_ALERT_RETENTION_DAYS",
+        "TGM_PUBLIC_URL",
+        "TGM_NOTIFY_ALLOW_PRIVATE_NETWORKS",
+        "TGM_SMTP_HOST",
+        "TGM_SMTP_PORT",
+        "TGM_SMTP_USERNAME",
+        "TGM_SMTP_PASSWORD",
+        "TGM_SMTP_FROM",
+        "TGM_SMTP_TLS",
     }
 )
+_SMTP_TLS_MODES = frozenset({"starttls", "implicit", "none"})
 # Read by the test suite, never by the manager.
-_TEST_ONLY_PREFIX = "TGM_E2E_"
+_TEST_ONLY_PREFIXES = ("TGM_E2E_", "TGM_TEST_")
 
 
 class ConfigError(ValueError):
@@ -50,7 +60,7 @@ def _reject_unknown(env: Mapping[str, str]) -> None:
     reported, never values.
     """
     unknown = sorted(
-        name for name in env if name.startswith(_PREFIX) and name not in SETTINGS and not name.startswith(_TEST_ONLY_PREFIX)
+        name for name in env if name.startswith(_PREFIX) and name not in SETTINGS and not name.startswith(_TEST_ONLY_PREFIXES)
     )
     if not unknown:
         return
@@ -114,9 +124,22 @@ class Config:
     agent_offline_seconds: int = 15 * 60
     login_max_failures: int = 5
     login_lockout_seconds: int = 15 * 60
+    # Sign-in attempts allowed per client address per minute, whoever they are for.
+    login_requests_per_minute: int = 10
     ingest_max_records: int = 500
     ingest_requests_per_minute: int = 240
     alert_retention_days: int = 90
+    # Where people reach the dashboard, for links in notifications. No trailing slash.
+    public_url: str | None = None
+    # Webhooks to private addresses are refused unless this is set; loopback and
+    # link-local (cloud metadata) addresses are refused either way.
+    notify_allow_private_networks: bool = False
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str = field(default="", repr=False)
+    smtp_from: str | None = None
+    smtp_tls: str = "starttls"
 
     def __post_init__(self) -> None:
         if len(self.secret_key) < MIN_SECRET_KEY_LENGTH:
@@ -129,6 +152,15 @@ class Config:
             raise ConfigError("TGM_LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR or CRITICAL")
         if self.session_idle_seconds > self.session_absolute_seconds:
             raise ConfigError("TGM_SESSION_IDLE_SECONDS must not exceed TGM_SESSION_ABSOLUTE_SECONDS")
+        if self.public_url is not None and not self.public_url.startswith(("https://", "http://")):
+            raise ConfigError("TGM_PUBLIC_URL must start with https:// (or http:// for local development)")
+        if self.smtp_tls not in _SMTP_TLS_MODES:
+            raise ConfigError("TGM_SMTP_TLS must be starttls, implicit or none")
+        if self.smtp_host and not self.smtp_from:
+            raise ConfigError("TGM_SMTP_FROM is required when TGM_SMTP_HOST is set")
+        if self.smtp_tls == "none" and self.smtp_username:
+            # A password sent over an unencrypted connection is readable by anything on the path.
+            raise ConfigError("TGM_SMTP_TLS=none cannot be combined with TGM_SMTP_USERNAME")
         if self.debug and self.secure_cookies:
             # Debug pages expose stack traces; never combine them with a production cookie posture.
             raise ConfigError("TGM_DEBUG=true requires TGM_SECURE_COOKIES=false and must not be used in production")
@@ -173,6 +205,9 @@ class Config:
             login_lockout_seconds=_int(
                 env, "TGM_LOGIN_LOCKOUT_SECONDS", defaults.login_lockout_seconds, minimum=60, maximum=86_400
             ),
+            login_requests_per_minute=_int(
+                env, "TGM_LOGIN_REQUESTS_PER_MINUTE", defaults.login_requests_per_minute, minimum=3, maximum=1_000
+            ),
             ingest_max_records=_int(env, "TGM_INGEST_MAX_RECORDS", defaults.ingest_max_records, minimum=1, maximum=5_000),
             ingest_requests_per_minute=_int(
                 env,
@@ -182,6 +217,14 @@ class Config:
                 maximum=100_000,
             ),
             alert_retention_days=_int(env, "TGM_ALERT_RETENTION_DAYS", defaults.alert_retention_days, minimum=1, maximum=3_650),
+            public_url=env.get("TGM_PUBLIC_URL", "").strip().rstrip("/") or None,
+            notify_allow_private_networks=_bool(env, "TGM_NOTIFY_ALLOW_PRIVATE_NETWORKS", defaults.notify_allow_private_networks),
+            smtp_host=env.get("TGM_SMTP_HOST", "").strip() or None,
+            smtp_port=_int(env, "TGM_SMTP_PORT", defaults.smtp_port, minimum=1, maximum=65_535),
+            smtp_username=env.get("TGM_SMTP_USERNAME", "").strip() or None,
+            smtp_password=env.get("TGM_SMTP_PASSWORD", ""),
+            smtp_from=env.get("TGM_SMTP_FROM", "").strip() or None,
+            smtp_tls=env.get("TGM_SMTP_TLS", defaults.smtp_tls).strip().lower(),
         )
 
     @classmethod

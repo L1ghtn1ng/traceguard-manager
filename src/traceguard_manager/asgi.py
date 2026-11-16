@@ -13,6 +13,7 @@ from flasgo import Flasgo, FlasgoJSONFormatter, configure_logging
 from .api import create_api_app
 from .config import Config
 from .db import Database
+from .notify import Transport
 from .signals import ChangeSignal
 from .web import create_web_app
 
@@ -62,7 +63,8 @@ def _configure_logging(config: Config) -> None:
         logger.propagate = False
 
 
-def create_app(config: Config | None = None) -> Manager:
+def create_app(config: Config | None = None, *, transport: Transport | None = None) -> Manager:
+    """Build the manager. ``transport`` replaces real notification delivery, for tests."""
     config = config or Config.from_env()
     _configure_logging(config)
     database = Database(config)
@@ -71,7 +73,7 @@ def create_app(config: Config | None = None) -> Manager:
         config=config,
         database=database,
         signal=signal,
-        web=create_web_app(config, database, signal),
+        web=create_web_app(config, database, signal, transport=transport),
         api=create_api_app(config, database, signal),
     )
 

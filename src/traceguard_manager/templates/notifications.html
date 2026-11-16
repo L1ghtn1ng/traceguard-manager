@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Notifications{% endblock %}
+{% block heading %}Notifications{% endblock %}
+{% block subheading %}{{ channels | length }} {{ "channel" if channels | length == 1 else "channels" }}{% endblock %}
+{% block actions %}<button class="btn btn-primary" type="button" data-open-dialog="channel-dialog">{{ ui.icon("plus") }} Add channel</button>{% endblock %}
+{% block content %}
+<p class="callout">{{ ui.icon("bell") }}<span>New open alerts at or above a channel's severity are sent to it within a few seconds. Muted alerts are never sent.{% if not public_url %} Set <code>TGM_PUBLIC_URL</code> to include links back to this dashboard.{% endif %}</span></p>
+<section class="card card-flush">
+  {% if channels %}
+  <div class="table-wrap">
+    <table class="table" data-testid="channels-table">
+      <thead><tr><th>Channel</th><th>Type</th><th>Sends to</th><th>From severity</th><th>State</th><th>Last result</th><th class="col-actions">Actions</th></tr></thead>
+      <tbody>
+        {% for channel, target in channels %}
+        <tr>
+          <td class="col-main"><span class="row-link">{{ channel.name }}</span><small>added by {{ channel.created_by }}</small></td>
+          <td>{{ {"webhook": "Signed webhook", "slack": "Chat webhook", "email": "Email"}[channel.kind] }}</td>
+          <td>{{ target }}</td>
+          <td>
+            <label class="select select-sm"><span class="sr-only">Severity for {{ channel.name }}</span>
+              <select data-submit="/notifications/{{ channel.id }}" data-method="PATCH" data-field="min_level" data-toast="Severity updated." aria-label="Severity for {{ channel.name }}">
+                {% for level in levels %}<option value="{{ level }}"{% if channel.min_level == level %} selected{% endif %}>{{ level | capitalize }}{% if level != "critical" %} and above{% endif %}</option>{% endfor %}
+              </select></label>
+          </td>
+          <td>{% if channel.enabled %}<span class="state state-online"><span class="state-dot"></span>on</span>{% else %}<span class="state state-disabled"><span class="state-dot"></span>off</span>{% endif %}</td>
+          <td>{% if channel.last_error %}<span class="chip status-open" title="{{ channel.last_error }}">failed</span> <small class="muted">{{ ui.when(channel.last_error_at) }} · {{ channel.last_error }}</small>
+            {% elif channel.last_success_at %}<span class="chip status-resolved">delivered</span> <small class="muted">{{ ui.when(channel.last_success_at) }}</small>
+            {% else %}<span class="muted">nothing sent yet</span>{% endif %}</td>
+          <td class="col-actions">
+            <button class="btn btn-sm" type="button" data-post="/notifications/{{ channel.id }}/test" data-then="toast" data-toast="Test sent to {{ channel.name }}.">Send test</button>
+            {% if channel.enabled %}
+            <button class="btn btn-sm btn-ghost" type="button" data-post="/notifications/{{ channel.id }}" data-method="PATCH" data-body='{"enabled": false}' data-then="reload">Turn off</button>
+            {% else %}
+            <button class="btn btn-sm btn-ghost" type="button" data-post="/notifications/{{ channel.id }}" data-method="PATCH" data-body='{"enabled": true}' data-then="reload">Turn on</button>
+            {% endif %}
+            <button class="btn btn-sm btn-ghost btn-danger-quiet" type="button" data-post="/notifications/{{ channel.id }}" data-method="DELETE" data-then="reload" data-confirm="Delete the channel {{ channel.name }}?">Delete</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><span class="empty-icon">{{ ui.icon("bell") }}</span><h3>Alerts are only visible here</h3>
+    <p class="muted">Add a channel so a new alert reaches someone even when nobody has the dashboard open.</p></div>
+  {% endif %}
+</section>
+
+<dialog class="dialog" id="channel-dialog" aria-labelledby="channel-title">
+  <form class="dialog-body form" data-api="/notifications" data-method="POST" data-then="secret">
+    <h2 id="channel-title">Add a notification channel</h2>
+    <label class="field"><span>Name</span>
+      <input class="input" type="text" name="name" maxlength="100" placeholder="On-call pager" required autofocus></label>
+    <label class="field"><span>Type</span>
+      <span class="select"><select name="kind" data-channel-kind>
+        <option value="webhook">Signed webhook: JSON for a pager, SIEM or script</option>
+        <option value="slack">Chat webhook: Slack, Mattermost or Teams</option>
+        <option value="email"{% if not email_ready %} disabled{% endif %}>Email{% if not email_ready %} (set TGM_SMTP_HOST first){% endif %}</option>
+      </select></span></label>
+    <label class="field"><span data-channel-target-label>URL</span>
+      <input class="input" type="text" name="target" maxlength="2000" placeholder="https://hooks.example.com/..." required>
+      <small class="muted" data-channel-target-help>Must be an https:// address. Only its host name is shown after it is saved.</small></label>
+    <label class="field"><span>Send alerts from</span>
+      <span class="select"><select name="min_level">
+        {% for level in levels %}<option value="{{ level }}"{% if level == "high" %} selected{% endif %}>{{ level | capitalize }}{% if level != "critical" %} and above{% endif %}</option>{% endfor %}
+      </select></span></label>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" type="button" data-close-dialog>Cancel</button>
+      <button class="btn btn-primary" type="submit">Add channel</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog dialog-wide" id="secret-dialog" aria-labelledby="secret-title">
+  <div class="dialog-body">
+    <h2 id="secret-title">Signing secret for <span id="secret-channel"></span></h2>
+    <p class="callout callout-warn">Copy this now; it is shown once. Your receiver uses it to check that a webhook really came from this manager.</p>
+    <pre class="snippet"><code id="secret-value" data-testid="secret-value"></code></pre>
+    <p class="muted small">Each request carries <code>X-TraceGuard-Timestamp</code> and <code>X-TraceGuard-Signature: sha256=…</code>, the HMAC-SHA256 of the timestamp, a full stop and the raw body. Reject requests whose timestamp is more than a few minutes old.</p>
+    <div class="dialog-actions">
+      <button class="btn" type="button" data-copy="#secret-value">{{ ui.icon("copy") }} Copy</button>
+      <button class="btn btn-primary" type="button" data-close-dialog data-then="reload">Done</button>
+    </div>
+  </div>
+</dialog>
+{% endblock %}

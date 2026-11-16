@@ -9,7 +9,7 @@
 <form class="filters card" method="get" action="/alerts" role="search">
   <label class="search">
     {{ ui.icon("search") }}
-    <input class="input" type="search" name="q" value="{{ filters.query or '' }}" placeholder="Search title, rule or host" maxlength="100" aria-label="Search alerts">
+    <input class="input" type="search" name="q" value="{{ filters.query or '' }}" placeholder="Search title, rule or host" maxlength="100" aria-label="Search alerts" data-search>
   </label>
   <label class="select"><span class="sr-only">Status</span>
     <select name="status" aria-label="Status">
@@ -31,22 +31,51 @@
       <option value="">Any agent</option>
       {% for agent in agents %}<option value="{{ agent.id }}"{% if filters.agent_id == agent.id %} selected{% endif %}>{{ agent.name }}</option>{% endfor %}
     </select></label>
+  <label class="select"><span class="sr-only">Time</span>
+    <select name="range" aria-label="Time">
+      <option value="">Any time</option>
+      {% for value, label in ranges.items() %}<option value="{{ value }}"{% if filters.time_range == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select></label>
+  <label class="select"><span class="sr-only">Owner</span>
+    <select name="owner" aria-label="Owner">
+      <option value="">Any owner</option>
+      <option value="me"{% if filters.owner == "me" %} selected{% endif %}>Mine</option>
+      <option value="none"{% if filters.owner == "none" %} selected{% endif %}>No owner</option>
+      {% for user in owners %}{% if user.id != current.id %}<option value="{{ user.id }}"{% if filters.owner == user.id | string %} selected{% endif %}>{{ user.username }}</option>{% endif %}{% endfor %}
+    </select></label>
   {% for pivot in pivots %}<input type="hidden" name="{{ pivot.name }}" value="{{ pivot.value }}">{% endfor %}
+  {% if filters.sort != "time" %}<input type="hidden" name="sort" value="{{ filters.sort }}">{% endif %}
+  {% if not filters.descending %}<input type="hidden" name="dir" value="asc">{% endif %}
+  {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
   <button class="btn btn-primary" type="submit">Apply</button>
   <a class="btn btn-ghost" href="/alerts">Reset</a>
 </form>
-{% if pivots %}
-<ul class="pivots" aria-label="Narrowed to" data-testid="pivots">
-  {% for pivot in pivots %}
-  <li class="pivot"><span class="pivot-label">{{ pivot.label }}</span><span class="pivot-text">{{ pivot.text }}</span><a class="pivot-remove" href="{{ pivot.remove_url }}" aria-label="Remove {{ pivot.label | lower }} filter" title="Remove this filter">&times;</a></li>
-  {% endfor %}
-</ul>
-{% endif %}
 
-{% if can_triage %}
-<div class="bulk" id="bulk-bar" hidden>
-  <span><strong id="bulk-count">0</strong> selected</span>
+<div class="toolbar">
+  {% if pivots %}
+  <ul class="pivots" aria-label="Narrowed to" data-testid="pivots">
+    {% for pivot in pivots %}
+    <li class="pivot"><span class="pivot-label">{{ pivot.label }}</span><span class="pivot-text">{{ pivot.text }}</span><a class="pivot-remove" href="{{ pivot.remove_url }}" aria-label="Remove {{ pivot.label | lower }} filter" title="Remove this filter">&times;</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <div class="toolbar-end">
+    <div class="segmented" role="group" aria-label="Group alerts">
+      <a class="segment{% if not group %} is-active{% endif %}" href="{{ group_urls.none }}"{% if not group %} aria-current="true"{% endif %}>List</a>
+      <a class="segment{% if group == "rule" %} is-active{% endif %}" href="{{ group_urls.rule }}"{% if group == "rule" %} aria-current="true"{% endif %}>By rule</a>
+      <a class="segment{% if group == "host" %} is-active{% endif %}" href="{{ group_urls.host }}"{% if group == "host" %} aria-current="true"{% endif %}>By host</a>
+    </div>
+    <a class="btn btn-ghost btn-sm" href="{{ export_urls.csv }}" download title="Download up to 10,000 matching alerts">{{ ui.icon("download") }} CSV</a>
+    <a class="btn btn-ghost btn-sm" href="{{ export_urls.json }}" download title="Download up to 10,000 matching alerts">{{ ui.icon("download") }} JSON</a>
+  </div>
+</div>
+
+{% if can_triage and not group %}
+<div class="bulk" id="bulk-bar" hidden data-filter="{{ filter_json }}" data-total="{{ total }}" data-limit="{{ bulk_limit }}">
+  <span><strong id="bulk-count">0</strong> selected
+    <button class="link-btn" type="button" id="bulk-all" hidden>Select all {{ total }} matching</button></span>
   <div class="bulk-actions">
+    <button class="btn btn-sm btn-ghost" type="button" data-bulk-assign="me">Assign to me</button>
     <button class="btn btn-sm" type="button" data-bulk-status="acknowledged">Acknowledge</button>
     <button class="btn btn-sm btn-primary" type="button" data-bulk-status="resolved">Resolve</button>
     <button class="btn btn-sm btn-ghost" type="button" data-bulk-status="open">Reopen</button>
@@ -55,25 +84,52 @@
 {% endif %}
 
 <section class="card card-flush">
-  {% if alerts %}
+  {% if group %}
+  {% if groups %}
   <div class="table-wrap">
-    <table class="table" data-testid="alerts-table">
+    <table class="table" data-testid="groups-table">
+      <thead><tr><th>{{ "Rule" if group == "rule" else "Host" }}</th><th class="col-num">Alerts</th><th class="col-num">Open</th><th>Worst</th><th class="col-time">Latest</th></tr></thead>
+      <tbody>
+        {% for item, url, level in groups %}
+        <tr class="row-level-{{ level }}">
+          <td class="col-main">{% if url %}<a class="row-link" href="{{ url }}">{{ item.key }}</a>{% else %}<span class="muted">No rule (enforcement and agent events)</span>{% endif %}</td>
+          <td class="col-num">{{ item.total }}</td>
+          <td class="col-num">{{ item.open }}</td>
+          <td><span class="pill level-{{ level }}"><span class="pill-dot"></span>{{ level }}</span></td>
+          <td class="col-time">{{ ui.when(item.latest) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><span class="empty-icon">{{ ui.icon("check") }}</span><h3>No alerts match</h3><p class="muted">Try clearing the filters, or check that agents are reporting on the Fleet page.</p></div>
+  {% endif %}
+  {% elif alerts %}
+  <div class="table-wrap">
+    <table class="table" data-testid="alerts-table" data-alert-rows>
       <thead>
         <tr>
           {% if can_triage %}<th class="col-check"><input type="checkbox" id="select-all" aria-label="Select all alerts on this page"></th>{% endif %}
-          <th>Severity</th><th>Alert</th><th>Host</th><th>Type</th><th>Status</th><th class="col-time">When</th>
+          {{ ui.sort_th("Severity", "severity", filters.sort, filters.descending, sort_urls.severity) }}
+          <th>Alert</th>
+          {{ ui.sort_th("Host", "host", filters.sort, filters.descending, sort_urls.host) }}
+          <th>Type</th><th>Owner</th>
+          {{ ui.sort_th("Status", "status", filters.sort, filters.descending, sort_urls.status) }}
+          {{ ui.sort_th("When", "time", filters.sort, filters.descending, sort_urls.time, "col-time") }}
         </tr>
       </thead>
       <tbody>
         {% for alert in alerts %}
-        <tr class="row-level-{{ alert.severity | level }}">
+        <tr class="row-level-{{ alert.severity | level }}" data-alert-id="{{ alert.id }}">
           {% if can_triage %}<td class="col-check"><input type="checkbox" class="row-check" value="{{ alert.id }}" aria-label="Select alert"></td>{% endif %}
           <td>{{ ui.level_pill(alert.severity) }}</td>
           <td class="col-main"><a class="row-link" href="/alerts/{{ alert.id }}">{{ alert.title }}</a>{% if alert.rule_id %}<small><a class="link-quiet" href="/alerts?rule={{ alert.rule_id | urlencode }}" title="Show alerts from this rule">{{ alert.rule_id }}</a></small>{% endif %}</td>
           <td><a class="link-quiet" href="/agents/{{ alert.agent_id }}">{{ agent_names.get(alert.agent_id, alert.hostname) }}</a></td>
           <td>{{ ui.kind_chip(alert.kind) }}</td>
+          <td>{% if alert.assignee_id %}<span class="owner" title="Owned by {{ usernames.get(alert.assignee_id, "a removed user") }}">{{ usernames.get(alert.assignee_id, "removed") }}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
           <td>{{ ui.status_chip(alert.status) }}</td>
-          <td class="col-time"><time datetime="{{ alert.occurred_at.isoformat() }}" title="{{ alert.occurred_at | datetime }}">{{ ago(alert.occurred_at) }}</time></td>
+          <td class="col-time">{{ ui.when(alert.occurred_at) }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -83,5 +139,5 @@
   <div class="empty"><span class="empty-icon">{{ ui.icon("check") }}</span><h3>No alerts match</h3><p class="muted">Try clearing the filters, or check that agents are reporting on the Fleet page.</p></div>
   {% endif %}
 </section>
-{{ ui.pagination("/alerts", page, pages, base_query) }}
+{% if not group %}{{ ui.pagination("/alerts", page, pages, base_query) }}{% endif %}
 {% endblock %}

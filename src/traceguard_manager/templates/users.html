@@ -8,26 +8,32 @@
 <section class="card card-flush">
   <div class="table-wrap">
     <table class="table" data-testid="users-table">
-      <thead><tr><th>User</th><th>Role</th><th>State</th><th>Last sign-in</th><th class="col-actions">Actions</th></tr></thead>
+      <thead><tr><th>User</th><th>Role</th><th>State</th><th>Two-step</th><th>Last sign-in</th><th class="col-actions">Actions</th></tr></thead>
       <tbody>
         {% for user in users %}
         <tr>
-          <td class="col-main"><span class="row-link">{{ user.username }}</span>{% if user.id == current.id %}<small>you</small>{% endif %}</td>
+          <td class="col-main"><span class="row-link">{{ user.username }}</span>{% if user.id == current.id %}<small>you</small>{% elif user.must_change_password %}<small>must choose a new password</small>{% endif %}</td>
           <td>
             <label class="select select-sm"><span class="sr-only">Role for {{ user.username }}</span>
-              <select data-patch="/users/{{ user.id }}" data-field="role" aria-label="Role for {{ user.username }}">
+              <select data-submit="/users/{{ user.id }}" data-method="PATCH" data-field="role" data-toast="Role updated." aria-label="Role for {{ user.username }}">
                 {% for role in roles %}<option value="{{ role }}"{% if user.role == role %} selected{% endif %}>{{ role | capitalize }}</option>{% endfor %}
               </select></label>
           </td>
-          <td>{% if user.is_active %}<span class="state state-online"><span class="state-dot"></span>active</span>{% else %}<span class="state state-disabled"><span class="state-dot"></span>disabled</span>{% endif %}</td>
-          <td><time title="{{ user.last_login_at | datetime }}">{{ ago(user.last_login_at) }}</time></td>
+          <td>{% if not user.is_active %}<span class="state state-disabled"><span class="state-dot"></span>disabled</span>
+            {% elif user.id in locked %}<span class="state state-offline" title="Too many failed sign-ins"><span class="state-dot"></span>locked until {{ ui.stamp(user.locked_until) }}</span>
+            {% else %}<span class="state state-online"><span class="state-dot"></span>active</span>{% endif %}</td>
+          <td>{% if user.totp_enabled_at %}<span class="chip status-resolved">on</span>{% else %}<span class="muted">off</span>{% endif %}</td>
+          <td>{{ ui.when(user.last_login_at) }}</td>
           <td class="col-actions">
+            {% if user.id in locked %}<button class="btn btn-sm" type="button" data-post="/users/{{ user.id }}" data-method="PATCH" data-body='{"unlock": true}' data-then="reload">Unlock</button>{% endif %}
             <button class="btn btn-sm btn-ghost" type="button" data-open-dialog="password-dialog" data-dialog-action="/users/{{ user.id }}/password" data-dialog-label="{{ user.username }}">Reset password</button>
+            {% if user.totp_enabled_at %}<button class="btn btn-sm btn-ghost" type="button" data-post="/users/{{ user.id }}/two-step/reset" data-then="reload" data-confirm="Turn off two-step sign-in for {{ user.username }}? Do this only when they have lost their device and you have checked it is really them. They are signed out everywhere.">Reset two-step</button>{% endif %}
             {% if user.is_active %}
             <button class="btn btn-sm btn-ghost" type="button" data-post="/users/{{ user.id }}" data-method="PATCH" data-body='{"is_active": false}' data-then="reload" data-confirm="Disable {{ user.username }}? They will be signed out everywhere.">Disable</button>
             {% else %}
             <button class="btn btn-sm btn-ghost" type="button" data-post="/users/{{ user.id }}" data-method="PATCH" data-body='{"is_active": true}' data-then="reload">Enable</button>
             {% endif %}
+            {% if user.id != current.id %}<button class="btn btn-sm btn-ghost btn-danger-quiet" type="button" data-post="/users/{{ user.id }}" data-method="DELETE" data-then="reload" data-confirm="Delete {{ user.username }}? The account is removed for good. What they did stays in the audit log.">Delete</button>{% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -43,7 +49,7 @@
       <input class="input" type="text" name="username" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" required autofocus></label>
     <label class="field"><span>Temporary password</span>
       <input class="input" type="password" name="password" minlength="12" maxlength="128" autocomplete="new-password" required>
-      <small class="muted">At least 12 characters. Ask them to change it after signing in.</small></label>
+      <small class="muted">At least 12 characters. They have to choose their own the first time they sign in.</small></label>
     <label class="field"><span>Role</span>
       <span class="select"><select name="role">
         <option value="viewer">Viewer: read-only</option>
@@ -61,8 +67,8 @@
 <dialog class="dialog" id="password-dialog" aria-labelledby="password-title">
   <form class="dialog-body form" data-api="" data-method="POST" data-then="reload">
     <h2 id="password-title">Reset password for <span data-dialog-label-target></span></h2>
-    <p class="muted">Their existing sessions are signed out.</p>
-    <label class="field"><span>New password</span>
+    <p class="muted">Their existing sessions are signed out, and they have to choose their own password the next time they sign in.</p>
+    <label class="field"><span>Temporary password</span>
       <input class="input" type="password" name="password" minlength="12" maxlength="128" autocomplete="new-password" required autofocus></label>
     <p class="form-error" role="alert" hidden></p>
     <div class="dialog-actions">
