@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Users{% endblock %}
+{% block heading %}Users{% endblock %}
+{% block subheading %}{{ users | length }} accounts{% endblock %}
+{% block actions %}<button class="btn btn-primary" type="button" data-open-dialog="user-dialog">{{ ui.icon("plus") }} Add user</button>{% endblock %}
+{% block content %}
+<section class="card card-flush">
+  <div class="table-wrap">
+    <table class="table" data-testid="users-table">
+      <thead><tr><th>User</th><th>Role</th><th>State</th><th>Last sign-in</th><th class="col-actions">Actions</th></tr></thead>
+      <tbody>
+        {% for user in users %}
+        <tr>
+          <td class="col-main"><span class="row-link">{{ user.username }}</span>{% if user.id == current.id %}<small>you</small>{% endif %}</td>
+          <td>
+            <label class="select select-sm"><span class="sr-only">Role for {{ user.username }}</span>
+              <select data-patch="/users/{{ user.id }}" data-field="role" aria-label="Role for {{ user.username }}">
+                {% for role in roles %}<option value="{{ role }}"{% if user.role == role %} selected{% endif %}>{{ role | capitalize }}</option>{% endfor %}
+              </select></label>
+          </td>
+          <td>{% if user.is_active %}<span class="state state-online"><span class="state-dot"></span>active</span>{% else %}<span class="state state-disabled"><span class="state-dot"></span>disabled</span>{% endif %}</td>
+          <td><time title="{{ user.last_login_at | datetime }}">{{ ago(user.last_login_at) }}</time></td>
+          <td class="col-actions">
+            <button class="btn btn-sm btn-ghost" type="button" data-open-dialog="password-dialog" data-dialog-action="/users/{{ user.id }}/password" data-dialog-label="{{ user.username }}">Reset password</button>
+            {% if user.is_active %}
+            <button class="btn btn-sm btn-ghost" type="button" data-post="/users/{{ user.id }}" data-method="PATCH" data-body='{"is_active": false}' data-then="reload" data-confirm="Disable {{ user.username }}? They will be signed out everywhere.">Disable</button>
+            {% else %}
+            <button class="btn btn-sm btn-ghost" type="button" data-post="/users/{{ user.id }}" data-method="PATCH" data-body='{"is_active": true}' data-then="reload">Enable</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<dialog class="dialog" id="user-dialog" aria-labelledby="user-title">
+  <form class="dialog-body form" data-api="/users" data-method="POST" data-then="reload">
+    <h2 id="user-title">Add a user</h2>
+    <label class="field"><span>Username</span>
+      <input class="input" type="text" name="username" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" required autofocus></label>
+    <label class="field"><span>Temporary password</span>
+      <input class="input" type="password" name="password" minlength="12" maxlength="128" autocomplete="new-password" required>
+      <small class="muted">At least 12 characters. Ask them to change it after signing in.</small></label>
+    <label class="field"><span>Role</span>
+      <span class="select"><select name="role">
+        <option value="viewer">Viewer: read-only</option>
+        <option value="analyst" selected>Analyst: triage alerts</option>
+        <option value="admin">Admin: manage agents and users</option>
+      </select></span></label>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" type="button" data-close-dialog>Cancel</button>
+      <button class="btn btn-primary" type="submit">Create user</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="password-dialog" aria-labelledby="password-title">
+  <form class="dialog-body form" data-api="" data-method="POST" data-then="reload">
+    <h2 id="password-title">Reset password for <span data-dialog-label-target></span></h2>
+    <p class="muted">Their existing sessions are signed out.</p>
+    <label class="field"><span>New password</span>
+      <input class="input" type="password" name="password" minlength="12" maxlength="128" autocomplete="new-password" required autofocus></label>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" type="button" data-close-dialog>Cancel</button>
+      <button class="btn btn-primary" type="submit">Reset password</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

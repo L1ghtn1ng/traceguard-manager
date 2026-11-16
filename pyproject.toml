@@ -1,0 +1,77 @@
+[project]
+name = "traceguard-manager"
+version = "0.1.0"
+description = "Fleet manager and alert console for TraceGuard agents"
+readme = "README.md"
+authors = [
+    { name = "L1ghtn1ng", email = "jay@cybermon.uk" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "argon2-cffi>=25.1.0",
+    "asyncpg>=0.32.0",
+    "flasgo[db]>=0.11.1",
+    "sqlalchemy[asyncio]>=2.1.8",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+traceguard-manager = "traceguard_manager.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.13.8,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+    "pytest-playwright>=0.10.0",
+    "ruff>=0.17.5",
+    "ty>=0.0.104",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 110
+src = ["src", "tests"]
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",  # pycodestyle, pyflakes
+    "I",            # import sorting
+    "B",            # bugbear
+    "UP",           # modern syntax
+    "S",            # bandit security checks
+    "ASYNC",        # blocking calls in async code
+    "C4", "SIM", "RET", "PTH", "PERF", "RUF", "DTZ", "T20", "N",
+]
+ignore = [
+    "S101",    # assert is used for narrowing and in tests
+    "RUF012",  # SQLAlchemy declarative attributes
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S311", "S603", "S607", "T20", "ASYNC"]
+"src/traceguard_manager/cli.py" = ["T20"]
+"src/traceguard_manager/migrations/**" = ["N999"]
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Browser tests run separately (`uv run pytest -m e2e`): Playwright's sync API and
+# pytest-asyncio cannot share one event-loop thread.
+addopts = "-ra --strict-markers -m 'not e2e'"
+markers = [
+    "e2e: browser tests that start a real server (run with `-m e2e`)",
+]
+filterwarnings = ["error::RuntimeWarning"]

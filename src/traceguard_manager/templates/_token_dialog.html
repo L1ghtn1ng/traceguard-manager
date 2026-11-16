@@ -1,0 +1,13 @@
+{% import "_macros.html" as ui %}
+<dialog class="dialog dialog-wide" id="token-dialog" aria-labelledby="token-title">
+  <div class="dialog-body">
+    <h2 id="token-title">Agent token for <span id="token-agent"></span></h2>
+    <p class="callout callout-warn">Copy this token now. It is shown once and cannot be recovered; rotate it if it is lost.</p>
+    <label class="field"><span>Add to the agent's environment file</span>
+      <pre class="snippet"><code id="token-snippet" data-testid="token-snippet"></code></pre></label>
+    <div class="dialog-actions">
+      <button class="btn" type="button" data-copy="#token-snippet">{{ ui.icon("copy") }} Copy</button>
+      <button class="btn btn-primary" type="button" data-close-dialog data-then="reload">Done</button>
+    </div>
+  </div>
+</dialog>

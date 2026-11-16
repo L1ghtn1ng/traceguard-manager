@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Account{% endblock %}
+{% block heading %}Account{% endblock %}
+{% block subheading %}Signed in as {{ current.username }} · {{ current.role }}{% endblock %}
+{% block content %}
+<section class="card card-narrow">
+  <header class="card-head"><div><h2>Change password</h2><p class="muted">Other browsers signed in to this account are signed out.</p></div></header>
+  <form class="form pad" data-api="/account/password" data-method="POST" data-then="toast" data-toast="Password changed." data-reset="true">
+    <label class="field"><span>Current password</span>
+      <input class="input" type="password" name="current_password" maxlength="128" autocomplete="current-password" required></label>
+    <label class="field"><span>New password</span>
+      <input class="input" type="password" name="new_password" minlength="{{ min_length }}" maxlength="128" autocomplete="new-password" required>
+      <small class="muted">At least {{ min_length }} characters. Long passphrases work well.</small></label>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="btn-row"><button class="btn btn-primary" type="submit">Update password</button></div>
+  </form>
+</section>
+{% endblock %}

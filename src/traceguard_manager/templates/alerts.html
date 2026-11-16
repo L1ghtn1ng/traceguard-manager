@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Alerts{% endblock %}
+{% block heading %}Alerts{% endblock %}
+{% block subheading %}{{ total }} matching{% if filters.status %} · {{ filters.status }}{% endif %}{% endblock %}
+{% block content_attrs %}{% if page == 1 %} data-live-refresh="true"{% endif %}{% endblock %}
+{% block content %}
+{% set can_triage = "alerts:write" in current.scopes %}
+<form class="filters card" method="get" action="/alerts" role="search">
+  <label class="search">
+    {{ ui.icon("search") }}
+    <input class="input" type="search" name="q" value="{{ filters.query or '' }}" placeholder="Search title, rule or host" maxlength="100" aria-label="Search alerts">
+  </label>
+  <label class="select"><span class="sr-only">Status</span>
+    <select name="status" aria-label="Status">
+      <option value="">Any status</option>
+      {% for value in statuses %}<option value="{{ value }}"{% if filters.status == value %} selected{% endif %}>{{ value | capitalize }}</option>{% endfor %}
+    </select></label>
+  <label class="select"><span class="sr-only">Severity</span>
+    <select name="level" aria-label="Severity">
+      <option value="">Any severity</option>
+      {% for value in levels %}<option value="{{ value }}"{% if filters.level == value %} selected{% endif %}>{{ value | capitalize }}</option>{% endfor %}
+    </select></label>
+  <label class="select"><span class="sr-only">Type</span>
+    <select name="kind" aria-label="Type">
+      <option value="">Any type</option>
+      {% for value in kinds %}<option value="{{ value }}"{% if filters.kind == value %} selected{% endif %}>{{ value | replace("_", " ") | capitalize }}</option>{% endfor %}
+    </select></label>
+  <label class="select"><span class="sr-only">Agent</span>
+    <select name="agent" aria-label="Agent">
+      <option value="">Any agent</option>
+      {% for agent in agents %}<option value="{{ agent.id }}"{% if filters.agent_id == agent.id %} selected{% endif %}>{{ agent.name }}</option>{% endfor %}
+    </select></label>
+  <button class="btn btn-primary" type="submit">Apply</button>
+  <a class="btn btn-ghost" href="/alerts">Reset</a>
+</form>
+
+{% if can_triage %}
+<div class="bulk" id="bulk-bar" hidden>
+  <span><strong id="bulk-count">0</strong> selected</span>
+  <div class="bulk-actions">
+    <button class="btn btn-sm" type="button" data-bulk-status="acknowledged">Acknowledge</button>
+    <button class="btn btn-sm btn-primary" type="button" data-bulk-status="resolved">Resolve</button>
+    <button class="btn btn-sm btn-ghost" type="button" data-bulk-status="open">Reopen</button>
+  </div>
+</div>
+{% endif %}
+
+<section class="card card-flush">
+  {% if alerts %}
+  <div class="table-wrap">
+    <table class="table" data-testid="alerts-table">
+      <thead>
+        <tr>
+          {% if can_triage %}<th class="col-check"><input type="checkbox" id="select-all" aria-label="Select all alerts on this page"></th>{% endif %}
+          <th>Severity</th><th>Alert</th><th>Host</th><th>Type</th><th>Status</th><th class="col-time">When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for alert in alerts %}
+        <tr class="row-level-{{ alert.severity | level }}">
+          {% if can_triage %}<td class="col-check"><input type="checkbox" class="row-check" value="{{ alert.id }}" aria-label="Select alert"></td>{% endif %}
+          <td>{{ ui.level_pill(alert.severity) }}</td>
+          <td class="col-main"><a class="row-link" href="/alerts/{{ alert.id }}">{{ alert.title }}</a>{% if alert.rule_id %}<small>{{ alert.rule_id }}</small>{% endif %}</td>
+          <td><a class="link-quiet" href="/agents/{{ alert.agent_id }}">{{ agent_names.get(alert.agent_id, alert.hostname) }}</a></td>
+          <td>{{ ui.kind_chip(alert.kind) }}</td>
+          <td>{{ ui.status_chip(alert.status) }}</td>
+          <td class="col-time"><time datetime="{{ alert.occurred_at.isoformat() }}" title="{{ alert.occurred_at | datetime }}">{{ ago(alert.occurred_at) }}</time></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><span class="empty-icon">{{ ui.icon("check") }}</span><h3>No alerts match</h3><p class="muted">Try clearing the filters, or check that agents are reporting on the Fleet page.</p></div>
+  {% endif %}
+</section>
+{{ ui.pagination("/alerts", page, pages, base_query) }}
+{% endblock %}

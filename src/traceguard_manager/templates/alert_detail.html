@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{{ alert.title }}{% endblock %}
+{% block heading %}Alert{% endblock %}
+{% block subheading %}<a class="link-quiet" href="/alerts?status=open">Alerts</a> / {{ alert.id }}{% endblock %}
+{% block content %}
+{% set can_triage = "alerts:write" in current.scopes %}
+<section class="card hero hero-{{ alert.severity | level }}">
+  <div class="hero-head">
+    {{ ui.level_pill(alert.severity) }} {{ ui.kind_chip(alert.kind) }} <span data-testid="alert-status">{{ ui.status_chip(alert.status) }}</span>
+  </div>
+  <h2 class="hero-title">{{ alert.title }}</h2>
+  <dl class="facts">
+    <div><dt>Agent</dt><dd>{% if agent %}<a href="/agents/{{ agent.id }}">{{ agent.name }}</a>{% else %}-{% endif %}</dd></div>
+    <div><dt>Hostname</dt><dd>{{ alert.hostname }}</dd></div>
+    <div><dt>Rule</dt><dd>{% if alert.rule_id %}<code>{{ alert.rule_id }}</code>{% else %}-{% endif %}</dd></div>
+    <div><dt>Source event</dt><dd>{{ alert.source_event or "-" }}</dd></div>
+    <div><dt>Occurred</dt><dd><time datetime="{{ alert.occurred_at.isoformat() }}">{{ alert.occurred_at | datetime }}</time></dd></div>
+    <div><dt>Received</dt><dd>{{ alert.received_at | datetime }}</dd></div>
+  </dl>
+  {% if alert.mitre_tactics or alert.mitre_techniques or alert.tags %}
+  <div class="tag-rows">
+    {% if alert.mitre_tactics %}<div><span class="tag-label">MITRE tactics</span><span>{% for item in alert.mitre_tactics %}<span class="tag tag-mitre">{{ item }}</span>{% endfor %}</span></div>{% endif %}
+    {% if alert.mitre_techniques %}<div><span class="tag-label">Techniques</span><span>{% for item in alert.mitre_techniques %}<span class="tag tag-mitre">{{ item }}</span>{% endfor %}</span></div>{% endif %}
+    {% if alert.tags %}<div><span class="tag-label">Tags</span><span>{% for item in alert.tags %}<span class="tag">{{ item }}</span>{% endfor %}</span></div>{% endif %}
+  </div>
+  {% endif %}
+</section>
+
+<div class="grid-2 grid-2-wide">
+  <section class="card">
+    <header class="card-head"><div><h2>Event details</h2><p class="muted">Fields reported by the agent</p></div></header>
+    {% if details %}
+    <dl class="kv">
+      {% for key, value in details %}<div><dt>{{ key }}</dt><dd>{{ value }}</dd></div>{% endfor %}
+    </dl>
+    {% else %}<p class="muted pad">No additional fields.</p>{% endif %}
+    <details class="raw">
+      <summary>Raw record</summary>
+      <pre><code>{{ alert.fields | pretty_json }}</code></pre>
+    </details>
+  </section>
+
+  <section class="card">
+    <header class="card-head"><div><h2>Triage</h2>
+      <p class="muted">{% if alert.status_changed_by %}{{ alert.status | capitalize }} by {{ alert.status_changed_by }} · {{ ago(alert.status_changed_at) }}{% else %}Not yet reviewed{% endif %}</p></div></header>
+    {% if can_triage %}
+    <form class="form pad" data-api="/alerts/status" data-method="POST" data-then="reload" data-status-form>
+      <input type="hidden" name="ids" value="{{ alert.id }}" data-json-list>
+      <label class="field"><span>Note</span>
+        <textarea class="input" name="note" rows="4" maxlength="2000" placeholder="What did you find? What was done?">{{ alert.note or "" }}</textarea></label>
+      <p class="form-error" role="alert" hidden></p>
+      <div class="btn-row">
+        {% if alert.status != "acknowledged" %}<button class="btn" type="submit" name="status" value="acknowledged">Acknowledge</button>{% endif %}
+        {% if alert.status != "resolved" %}<button class="btn btn-primary" type="submit" name="status" value="resolved">Resolve</button>{% endif %}
+        {% if alert.status != "open" %}<button class="btn btn-ghost" type="submit" name="status" value="open">Reopen</button>{% endif %}
+      </div>
+    </form>
+    {% else %}
+    <div class="pad">
+      {% if alert.note %}<p class="note">{{ alert.note }}</p>{% else %}<p class="muted">No note recorded.</p>{% endif %}
+      <p class="muted small">Your role is read-only. Ask an analyst or administrator to triage this alert.</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

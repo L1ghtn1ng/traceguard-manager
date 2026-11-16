@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Fleet{% endblock %}
+{% block heading %}Fleet{% endblock %}
+{% block subheading %}{{ fleet.total }} agents · {{ fleet.online }} online · {{ fleet.degraded }} degraded · {{ fleet.offline }} offline{% endblock %}
+{% block actions %}
+{% if "agents:write" in current.scopes %}<button class="btn btn-primary" type="button" data-open-dialog="enroll-dialog">{{ ui.icon("plus") }} Enrol agent</button>{% endif %}
+{% endblock %}
+{% block content %}
+{% if fleet.drifted %}
+<p class="callout callout-warn">{{ ui.icon("drift") }}<span>{{ fleet.drifted }} {{ "agent reports" if fleet.drifted == 1 else "agents report" }} a policy that differs from the fleet baseline <code>{{ fleet.baseline_policy[:12] }}</code></span></p>
+{% endif %}
+<section class="card card-flush">
+  {% if agents %}
+  <div class="table-wrap">
+    <table class="table" data-testid="agents-table">
+      <thead><tr><th>Status</th><th>Agent</th><th>Hostname</th><th>Last seen</th><th>Policy</th><th>Mode</th><th>Uptime</th><th class="col-num">Rules</th></tr></thead>
+      <tbody>
+        {% for view in agents %}
+        {% set agent = view.agent %}
+        <tr>
+          <td>{{ ui.agent_status(view.status) }}</td>
+          <td class="col-main"><a class="row-link" href="/agents/{{ agent.id }}">{{ agent.name }}</a></td>
+          <td>{{ agent.hostname or "-" }}</td>
+          <td><time title="{{ agent.last_seen_at | datetime }}">{{ ago(agent.last_seen_at) }}</time></td>
+          <td>{% if agent.policy_sha256 %}<code title="{{ agent.policy_sha256 }}">{{ agent.policy_sha256[:12] }}</code>{% if view.drifted %} <span class="chip status-drift">drift</span>{% endif %}{% else %}-{% endif %}</td>
+          <td>{{ agent.policy_mode or "-" }}</td>
+          <td>{{ agent.uptime_seconds | duration }}</td>
+          <td class="col-num">{{ agent.detection_rules if agent.detection_rules is not none else "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><span class="empty-icon">{{ ui.icon("fleet") }}</span><h3>No agents yet</h3>
+    <p class="muted">Enrol an agent to get a token, then point TraceGuard's HTTPS export at this manager.</p></div>
+  {% endif %}
+</section>
+
+{% if "agents:write" in current.scopes %}
+<dialog class="dialog" id="enroll-dialog" aria-labelledby="enroll-title">
+  <form class="dialog-body form" data-api="/agents" data-method="POST" data-then="token">
+    <h2 id="enroll-title">Enrol an agent</h2>
+    <p class="muted">Each host gets its own token, so one compromised host can be revoked without touching the rest.</p>
+    <label class="field"><span>Agent name</span>
+      <input class="input" type="text" name="name" maxlength="100" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" placeholder="web-01" required autofocus></label>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="btn btn-ghost" type="button" data-close-dialog>Cancel</button>
+      <button class="btn btn-primary" type="submit">Create token</button>
+    </div>
+  </form>
+</dialog>
+{% include "_token_dialog.html" %}
+{% endif %}
+{% endblock %}

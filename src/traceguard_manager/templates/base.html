@@ -1,0 +1,75 @@
+{% import "_macros.html" as ui %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Overview{% endblock %} · TraceGuard Manager</title>
+  <link rel="icon" href="/static/favicon.svg?v={{ app_version }}" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ app_version }}">
+  <script type="module" src="/static/js/app.js?v={{ app_version }}"></script>
+</head>
+<body class="shell"{% if current %} data-live="true"{% endif %}>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/">
+      <span class="brand-mark">{{ ui.icon("shield") }}</span>
+      <span class="brand-text"><strong>TraceGuard</strong><small>Manager</small></span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a class="nav-link{% if path == '/' %} is-active{% endif %}" href="/"{% if path == '/' %} aria-current="page"{% endif %}>{{ ui.icon("overview") }}<span>Overview</span></a>
+      <a class="nav-link{% if path.startswith('/alerts') %} is-active{% endif %}" href="/alerts?status=open"{% if path.startswith('/alerts') %} aria-current="page"{% endif %}>{{ ui.icon("alerts") }}<span>Alerts</span></a>
+      <a class="nav-link{% if path.startswith('/agents') %} is-active{% endif %}" href="/agents"{% if path.startswith('/agents') %} aria-current="page"{% endif %}>{{ ui.icon("fleet") }}<span>Fleet</span></a>
+      {% if current and ("users:manage" in current.scopes or "audit:read" in current.scopes) %}
+      <span class="nav-heading">Administration</span>
+      {% if "users:manage" in current.scopes %}
+      <a class="nav-link{% if path.startswith('/users') %} is-active{% endif %}" href="/users"{% if path.startswith('/users') %} aria-current="page"{% endif %}>{{ ui.icon("users") }}<span>Users</span></a>
+      {% endif %}
+      {% if "audit:read" in current.scopes %}
+      <a class="nav-link{% if path.startswith('/audit') %} is-active{% endif %}" href="/audit"{% if path.startswith('/audit') %} aria-current="page"{% endif %}>{{ ui.icon("audit") }}<span>Audit log</span></a>
+      {% endif %}
+      {% endif %}
+    </nav>
+    {% if current %}
+    <div class="sidebar-foot">
+      <a class="user-card{% if path == '/account' %} is-active{% endif %}" href="/account" title="Account settings">
+        <span class="avatar" aria-hidden="true">{{ current.username[:2] | upper }}</span>
+        <span class="user-meta"><strong data-testid="current-user">{{ current.username }}</strong><small>{{ current.role }}</small></span>
+      </a>
+      <button class="icon-btn" type="button" data-post="/auth/logout" data-then="redirect" title="Sign out" aria-label="Sign out">{{ ui.icon("logout") }}</button>
+    </div>
+    {% endif %}
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-toggle" type="button" data-toggle-sidebar aria-controls="sidebar" aria-label="Toggle navigation">{{ ui.icon("menu") }}</button>
+      <div class="topbar-title">
+        <h1>{% block heading %}Overview{% endblock %}</h1>
+        <p>{% block subheading %}{% endblock %}</p>
+      </div>
+      <div class="topbar-actions">
+        {% block actions %}{% endblock %}
+        <span class="live" id="live-indicator" data-state="idle" title="Live updates"><span class="live-dot"></span><span class="live-label">Offline</span></span>
+      </div>
+    </header>
+    <main id="content" class="content"{% block content_attrs %}{% endblock %}>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <dialog class="dialog" id="confirm-dialog" aria-labelledby="confirm-title">
+    <form method="dialog" class="dialog-body">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p id="confirm-message" class="muted"></p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" value="cancel">Cancel</button>
+        <button class="btn btn-danger" value="confirm" id="confirm-accept">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Overview{% endblock %}
+{% block heading %}Overview{% endblock %}
+{% block subheading %}Open alerts and fleet health at a glance{% endblock %}
+{% block content_attrs %} data-live-refresh="true"{% endblock %}
+{% block content %}
+<section class="stats">
+  <a class="stat stat-accent" href="/alerts?status=open">
+    <span class="stat-label">Open alerts</span>
+    <strong class="stat-value" data-testid="open-alerts">{{ stats.open_total }}</strong>
+    <span class="stat-foot">{{ stats.acknowledged_total }} acknowledged · {{ stats.resolved_24h }} resolved in 24h</span>
+  </a>
+  <a class="stat stat-critical" href="/alerts?status=open&level=critical">
+    <span class="stat-label">Critical</span>
+    <strong class="stat-value">{{ stats.open_by_level.critical }}</strong>
+    <span class="stat-foot">{{ stats.open_by_level.high }} high · {{ stats.open_by_level.medium }} medium open</span>
+  </a>
+  <a class="stat stat-online" href="/agents">
+    <span class="stat-label">Agents online</span>
+    <strong class="stat-value">{{ fleet.online }}<small>/ {{ fleet.total - fleet.disabled }}</small></strong>
+    <span class="stat-foot">{{ fleet.degraded }} degraded · {{ fleet.offline }} offline · {{ fleet.pending }} pending</span>
+  </a>
+  <a class="stat stat-drift" href="/agents">
+    <span class="stat-label">Policy drift</span>
+    <strong class="stat-value">{{ fleet.drifted }}</strong>
+    <span class="stat-foot">{% if fleet.baseline_policy %}baseline <code>{{ fleet.baseline_policy[:12] }}</code>{% else %}no policy reported yet{% endif %}</span>
+  </a>
+</section>
+
+<section class="card">
+  <header class="card-head">
+    <div>
+      <h2>Alerts in the last 24 hours</h2>
+      <p class="muted">{{ stats.last_24h }} total · busiest hour {{ stats.timeline_peak }} · times in UTC</p>
+    </div>
+    <ul class="legend">
+      {% for level in levels %}<li><span class="legend-swatch level-{{ level }}"></span>{{ level }}</li>{% endfor %}
+    </ul>
+  </header>
+  <svg class="chart" viewBox="0 0 {{ chart_width }} {{ chart_height }}" role="img" aria-label="Alerts per hour over the last 24 hours">
+    <line class="chart-grid" x1="0" x2="{{ chart_width }}" y1="12" y2="12"/>
+    <line class="chart-grid" x1="0" x2="{{ chart_width }}" y1="87" y2="87"/>
+    <line class="chart-axis" x1="0" x2="{{ chart_width }}" y1="162" y2="162"/>
+    {% for bar in chart %}
+    <g>
+      <title>{{ bar.label }} UTC: {{ bar.total }} alerts</title>
+      <rect class="chart-slot" x="{{ bar.x - 4 }}" y="12" width="27" height="150" rx="4"/>
+      {% for segment in bar.segments %}
+      <rect class="chart-bar level-{{ segment.level }}" x="{{ bar.x }}" y="{{ segment.y }}" width="19" height="{{ segment.height }}" rx="2.5"/>
+      {% endfor %}
+      {% if bar.show_label %}<text class="chart-label" x="{{ bar.x + 9.5 }}" y="184" text-anchor="middle">{{ bar.label }}</text>{% endif %}
+    </g>
+    {% endfor %}
+  </svg>
+</section>
+
+<div class="grid-2">
+  <section class="card">
+    <header class="card-head">
+      <div><h2>Needs attention</h2><p class="muted">Most recent open alerts</p></div>
+      <a class="btn btn-ghost btn-sm" href="/alerts?status=open">View all {{ ui.icon("arrow") }}</a>
+    </header>
+    {% if recent %}
+    <ul class="feed">
+      {% for alert in recent %}
+      <li>
+        <a class="feed-item" href="/alerts/{{ alert.id }}">
+          <span class="feed-bar level-{{ alert.severity | level }}"></span>
+          <span class="feed-main">
+            <strong>{{ alert.title }}</strong>
+            <small>{{ alert.hostname }}{% if alert.rule_id %} · {{ alert.rule_id }}{% endif %}</small>
+          </span>
+          <span class="feed-side">{{ ui.level_pill(alert.severity) }}<time datetime="{{ alert.occurred_at.isoformat() }}" title="{{ alert.occurred_at | datetime }}">{{ ago(alert.occurred_at) }}</time></span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="empty"><span class="empty-icon">{{ ui.icon("check") }}</span><h3>All clear</h3><p class="muted">No open alerts. New ones appear here as agents report them.</p></div>
+    {% endif %}
+  </section>
+
+  <div class="stack">
+    <section class="card">
+      <header class="card-head"><div><h2>Top rules</h2><p class="muted">Last 7 days</p></div></header>
+      {% if stats.top_rules %}
+      <ul class="rank">
+        {% for name, count, width in top_rules %}
+        <li><span class="rank-name" title="{{ name }}">{{ name }}</span><span class="rank-count">{{ count }}</span>
+          <svg class="rank-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="rank-track" width="100" height="6" rx="3"/><rect class="rank-fill" width="{{ width }}" height="6" rx="3"/></svg></li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="muted pad">No detection rules have fired yet.</p>{% endif %}
+    </section>
+    <section class="card">
+      <header class="card-head"><div><h2>Noisiest hosts</h2><p class="muted">Last 7 days</p></div></header>
+      {% if stats.top_hosts %}
+      <ul class="rank">
+        {% for name, count, width in top_hosts %}
+        <li><span class="rank-name" title="{{ name }}">{{ name }}</span><span class="rank-count">{{ count }}</span>
+          <svg class="rank-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="rank-track" width="100" height="6" rx="3"/><rect class="rank-fill rank-fill-alt" width="{{ width }}" height="6" rx="3"/></svg></li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="muted pad">No hosts have reported alerts yet.</p>{% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

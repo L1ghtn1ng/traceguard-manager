@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{{ agent.name }}{% endblock %}
+{% block heading %}{{ agent.name }}{% endblock %}
+{% block subheading %}<a class="link-quiet" href="/agents">Fleet</a> / {{ agent.hostname or "not yet connected" }}{% endblock %}
+{% block actions %}
+{% if "agents:write" in current.scopes %}
+<button class="btn" type="button" data-post="/agents/{{ agent.id }}/rotate" data-then="token" data-confirm="Rotate the token for {{ agent.name }}? The current token stops working immediately.">{{ ui.icon("key") }} Rotate token</button>
+{% if agent.enabled %}
+<button class="btn" type="button" data-post="/agents/{{ agent.id }}/enabled" data-body='{"enabled": false}' data-then="reload" data-confirm="Disable {{ agent.name }}? Its events will be rejected until it is enabled again.">Disable</button>
+{% else %}
+<button class="btn" type="button" data-post="/agents/{{ agent.id }}/enabled" data-body='{"enabled": true}' data-then="reload">Enable</button>
+{% endif %}
+<button class="btn btn-danger" type="button" data-post="/agents/{{ agent.id }}" data-method="DELETE" data-then="redirect" data-confirm="Delete {{ agent.name }} and all of its alerts? This cannot be undone.">Delete</button>
+{% endif %}
+{% endblock %}
+{% block content %}
+<section class="stats">
+  <div class="stat"><span class="stat-label">Status</span><strong class="stat-value stat-value-sm">{{ ui.agent_status(view.status) }}</strong><span class="stat-foot">last seen {{ ago(agent.last_seen_at) }}</span></div>
+  <div class="stat"><span class="stat-label">Policy</span><strong class="stat-value stat-value-sm">{% if agent.policy_sha256 %}<code title="{{ agent.policy_sha256 }}">{{ agent.policy_sha256[:12] }}</code>{% else %}-{% endif %}</strong>
+    <span class="stat-foot">{% if view.drifted %}<span class="chip status-drift">drift</span> baseline {{ fleet.baseline_policy[:12] }}{% elif agent.policy_sha256 %}matches fleet baseline{% else %}not reported{% endif %}</span></div>
+  <div class="stat"><span class="stat-label">Uptime</span><strong class="stat-value stat-value-sm">{{ agent.uptime_seconds | duration }}</strong><span class="stat-foot">mode {{ agent.policy_mode or "-" }}</span></div>
+  <div class="stat"><span class="stat-label">Events received</span><strong class="stat-value stat-value-sm">{{ agent.events_received }}</strong><span class="stat-foot">{{ agent.detection_rules if agent.detection_rules is not none else "-" }} detection rules</span></div>
+</section>
+
+<div class="grid-2 grid-2-wide">
+  <section class="card">
+    <header class="card-head"><div><h2>Recent alerts</h2><p class="muted">Latest from this agent</p></div>
+      <a class="btn btn-ghost btn-sm" href="/alerts?agent={{ agent.id }}">View all {{ ui.icon("arrow") }}</a></header>
+    {% if recent %}
+    <ul class="feed">
+      {% for alert in recent %}
+      <li><a class="feed-item" href="/alerts/{{ alert.id }}">
+        <span class="feed-bar level-{{ alert.severity | level }}"></span>
+        <span class="feed-main"><strong>{{ alert.title }}</strong><small>{{ alert.kind | replace("_", " ") }}{% if alert.rule_id %} · {{ alert.rule_id }}{% endif %}</small></span>
+        <span class="feed-side">{{ ui.status_chip(alert.status) }}<time title="{{ alert.occurred_at | datetime }}">{{ ago(alert.occurred_at) }}</time></span>
+      </a></li>
+      {% endfor %}
+    </ul>
+    {% else %}<div class="empty"><span class="empty-icon">{{ ui.icon("check") }}</span><h3>Nothing reported</h3><p class="muted">This agent has not raised any alerts.</p></div>{% endif %}
+  </section>
+
+  <section class="card">
+    <header class="card-head"><div><h2>Health</h2><p class="muted">From the latest heartbeat</p></div></header>
+    <dl class="kv">
+      <div><dt>Self-reported health</dt><dd>{% if agent.healthy is none %}-{% elif agent.healthy %}healthy{% else %}unhealthy{% endif %}</dd></div>
+      <div><dt>Last heartbeat</dt><dd>{{ agent.last_heartbeat_at | datetime }}</dd></div>
+      <div><dt>Ring buffer</dt><dd>{% if agent.ringbuf_degraded %}degraded{% elif agent.ringbuf_degraded is none %}-{% else %}ok{% endif %}{% if agent.ringbuf_dropped_events %} · {{ agent.ringbuf_dropped_events }} dropped{% endif %}</dd></div>
+      <div><dt>Unavailable hooks</dt><dd>{% if agent.unavailable_hooks %}{% for hook in agent.unavailable_hooks %}<span class="tag">{{ hook }}</span>{% endfor %}{% else %}none{% endif %}</dd></div>
+      <div><dt>Token</dt><dd><code>{{ agent.token_prefix }}…</code> · rotated {{ ago(agent.token_rotated_at) }}</dd></div>
+      <div><dt>Enrolled</dt><dd>{{ agent.created_at | datetime }}</dd></div>
+    </dl>
+  </section>
+</div>
+{% if "agents:write" in current.scopes %}{% include "_token_dialog.html" %}{% endif %}
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "bare.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <div class="auth-brand">
+    <span class="brand-mark brand-mark-lg">{{ ui.icon("shield") }}</span>
+    <div>
+      <h1>TraceGuard Manager</h1>
+      <p class="muted">Fleet health and alert triage</p>
+    </div>
+  </div>
+  <form class="form" data-api="/auth/login" data-method="POST" data-then="redirect" novalidate>
+    <input type="hidden" name="next" value="{{ next }}">
+    <label class="field">
+      <span>Username</span>
+      <input class="input" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="64" required autofocus>
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input class="input" type="password" name="password" autocomplete="current-password" maxlength="128" required>
+    </label>
+    <p class="form-error" role="alert" hidden></p>
+    <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+  </form>
+  <p class="auth-foot muted">Access is logged. Accounts are created by an administrator.</p>
+</section>
+{% endblock %}

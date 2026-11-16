@@ -1,0 +1,20 @@
+{% import "_macros.html" as ui %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}{% endblock %} · TraceGuard Manager</title>
+  <link rel="icon" href="/static/favicon.svg?v={{ app_version }}" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ app_version }}">
+  <script type="module" src="/static/js/app.js?v={{ app_version }}"></script>
+</head>
+<body class="bare">
+  <main class="bare-main">
+    {% block content %}{% endblock %}
+  </main>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

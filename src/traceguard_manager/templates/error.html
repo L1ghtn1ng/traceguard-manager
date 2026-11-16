@@ -1,0 +1,11 @@
+{% extends "bare.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{{ message }}{% endblock %}
+{% block content %}
+<section class="auth-card error-card">
+  <p class="error-code">{{ status }}</p>
+  <h1>{{ message }}</h1>
+  <p class="muted">If this keeps happening, give your administrator this reference: <code>{{ request_id }}</code></p>
+  <a class="btn btn-primary" href="/">Back to overview</a>
+</section>
+{% endblock %}
