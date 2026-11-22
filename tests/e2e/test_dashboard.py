@@ -1,5 +1,6 @@
 import re
 import time
+import urllib.request
 import uuid
 from collections.abc import Callable
 
@@ -494,3 +495,60 @@ def test_alerts_can_be_downloaded_as_csv(page: Page, server: Server, sign_in: Si
     saved = download.value
     assert saved.suggested_filename.startswith("traceguard-alerts-") and saved.suggested_filename.endswith(".csv")
     assert f"Exported from {name}" in open(saved.path(), encoding="utf-8").read()  # noqa: PTH123, SIM115
+
+
+def test_admin_writes_a_policy_and_sees_where_it_goes(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page)
+    name = unique("web-policy")
+    page.goto(f"{server.url}/policies")
+    expect(page.get_by_test_id("policy-setup")).to_contain_text("TRACEGUARD_POLICY_URL=")
+    page.get_by_role("link", name="New policy").first.click()
+    form = page.get_by_test_id("policy-form")
+    form.get_by_label("Name").fill(name)
+    form.get_by_label("Agent tags").fill("web")
+    content = form.get_by_test_id("policy-content")
+    content.fill("version: 2\n")
+    form.get_by_role("button", name="Create policy").click()
+    expect(form.get_by_role("alert")).to_contain_text("version: 1")
+    content.fill("version: 1\ndns:\n  block: [evil.example]\n")
+    form.get_by_role("button", name="Create policy").click()
+    expect(page).to_have_url(re.compile(r"/policies/[0-9a-f-]{36}$"))
+    expect(page.get_by_role("heading", name=name)).to_be_visible()
+    page.goto(f"{server.url}/policies")
+    expect(page.get_by_test_id("policies-table")).to_contain_text(name)
+
+
+def test_admin_sends_a_command_and_sees_its_state(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page)
+    name = unique("cmd")
+    enrol_agent(page, server, name)
+    page.get_by_test_id("agents-table").get_by_role("link", name=name).click()
+    form = page.get_by_test_id("command-form")
+    # Refreshing policy needs no target, so the field steps aside.
+    form.get_by_label("Action").select_option("refresh_policy")
+    expect(form.get_by_label("Target")).to_be_hidden()
+    form.get_by_label("Action").select_option("block_peer")
+    form.get_by_label("Target").fill("127.0.0.1")
+    form.get_by_role("button", name="Send").click()
+    page.get_by_role("button", name="Confirm").click()
+    expect(form.get_by_role("alert")).to_contain_text("Loopback")
+    form.get_by_label("Target").fill("203.0.113.7")
+    form.get_by_role("button", name="Send").click()
+    page.get_by_role("button", name="Confirm").click()
+    row = page.get_by_test_id("command-row").first
+    expect(row).to_contain_text("Block peer 203.0.113.7 for 1 h")
+    expect(row).to_contain_text("queued")
+    row.get_by_role("button", name="Cancel").click()
+    expect(page.get_by_test_id("command-row").first).to_contain_text("cancelled")
+
+
+def test_an_agent_fetches_a_signed_policy(page: Page, server: Server, sign_in: SignIn) -> None:
+    sign_in(page)
+    token = enrol_agent(page, server, unique("fetch"))
+    request = urllib.request.Request(  # noqa: S310 - fixed http://127.0.0.1 test server
+        f"{server.url}/api/v1/policy", headers={"authorization": f"Bearer {token}"}
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+        assert response.status == 200
+        assert response.headers["etag"].startswith('"')
+        assert b"version: 1" in response.read()

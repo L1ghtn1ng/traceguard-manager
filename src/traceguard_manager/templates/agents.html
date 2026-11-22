@@ -2,7 +2,7 @@
 {% import "_macros.html" as ui %}
 {% block title %}Fleet{% endblock %}
 {% block heading %}Fleet{% endblock %}
-{% block subheading %}{{ fleet.total }} agents · {{ fleet.online }} online · {{ fleet.degraded }} degraded · {{ fleet.offline }} offline{% endblock %}
+{% block subheading %}{{ fleet.total }} agents · {{ fleet.online }} online · {{ fleet.degraded }} degraded{% if fleet.stopped %} · {{ fleet.stopped }} stopped{% endif %} · {{ fleet.offline }} offline{% endblock %}
 {% block actions %}
 {% if "agents:write" in current.scopes %}<button class="btn btn-primary" type="button" data-open-dialog="enroll-dialog">{{ ui.icon("plus") }} Enrol agent</button>{% endif %}
 {% endblock %}

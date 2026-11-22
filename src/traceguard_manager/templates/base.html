@@ -27,10 +27,13 @@
       <a class="nav-link{% if path.startswith('/alerts') %} is-active{% endif %}" href="/alerts?status=open"{% if path.startswith('/alerts') %} aria-current="page"{% endif %}>{{ ui.icon("alerts") }}<span>Alerts</span></a>
       <a class="nav-link{% if path.startswith('/agents') %} is-active{% endif %}" href="/agents"{% if path.startswith('/agents') %} aria-current="page"{% endif %}>{{ ui.icon("fleet") }}<span>Fleet</span></a>
       <a class="nav-link{% if path.startswith('/mutes') %} is-active{% endif %}" href="/mutes"{% if path.startswith('/mutes') %} aria-current="page"{% endif %}>{{ ui.icon("mute") }}<span>Mute rules</span></a>
-      {% if current and ("users:manage" in current.scopes or "audit:read" in current.scopes or "notify:manage" in current.scopes) %}
+      {% if current and ("users:manage" in current.scopes or "audit:read" in current.scopes or "notify:manage" in current.scopes or "policy:manage" in current.scopes) %}
       <span class="nav-heading">Administration</span>
       {% if "users:manage" in current.scopes %}
       <a class="nav-link{% if path.startswith('/users') %} is-active{% endif %}" href="/users"{% if path.startswith('/users') %} aria-current="page"{% endif %}>{{ ui.icon("users") }}<span>Users</span></a>
+      {% endif %}
+      {% if "policy:manage" in current.scopes %}
+      <a class="nav-link{% if path.startswith('/policies') %} is-active{% endif %}" href="/policies"{% if path.startswith('/policies') %} aria-current="page"{% endif %}>{{ ui.icon("shield") }}<span>Policies</span></a>
       {% endif %}
       {% if "notify:manage" in current.scopes %}
       <a class="nav-link{% if path.startswith('/notifications') %} is-active{% endif %}" href="/notifications"{% if path.startswith('/notifications') %} aria-current="page"{% endif %}>{{ ui.icon("bell") }}<span>Notifications</span></a>

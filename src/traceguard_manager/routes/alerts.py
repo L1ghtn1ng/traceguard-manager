@@ -1,5 +1,6 @@
 """The overview, the alert list and detail pages, triage actions, exports and mute rules."""
 
+import ipaddress
 import json
 import uuid
 from dataclasses import dataclass
@@ -9,8 +10,8 @@ from urllib.parse import urlencode
 
 from flasgo import Body, Request, Response, abort
 
-from .. import accounts, alerts, charts, fleet, mutes
-from ..models import AlertKind, AlertStatus, Role, User, utcnow
+from .. import accounts, alerts, charts, commands, fleet, mutes
+from ..models import Agent, Alert, AlertKind, AlertStatus, Role, User, utcnow
 from ..webcontext import Web, page_count, parse_uuid, query_params
 
 # Shown in the alert header already, so left out of the field table.
@@ -59,9 +60,9 @@ class MuteBody:
     # From an alert: which of its rule and host to mute.
     alert_id: str | None = None
     scope: str | None = None
-    # Or spelled out directly.
+    # Or spelled out directly: a rule, an enrolled agent, or both.
     rule_id: str | None = None
-    hostname: str | None = None
+    agent_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,12 +256,14 @@ def register(web: Web) -> None:
             agent = await fleet.get_agent(session, alert.agent_id)
             history = await alerts.history(session, alert.id)
             related = await alerts.related(session, alert)
+            linked = await alerts.linked(session, alert)
+            sent = await commands.for_alert(session, alert_id=alert.id)
             owners = await triage_users(session)
             owner = await accounts.get_user(session, alert.assignee_id) if alert.assignee_id else None
             muted_by = [
                 rule
                 for rule in await mutes.active(session, now=now)
-                if mutes.matches([rule], rule_id=alert.rule_id, hostname=alert.hostname)
+                if mutes.matches([rule], rule_id=alert.rule_id, hostname=alert.hostname, agent_id=alert.agent_id)
             ]
         details = sorted(
             (key, value)
@@ -279,6 +282,11 @@ def register(web: Web) -> None:
             owner=owner,
             muted_by=muted_by,
             mute_durations=mutes.DURATION_LABELS,
+            linked=linked,
+            sent=sent,
+            quick=quick_actions(alert, fleet.in_force(agent, now=now) if agent else []),
+            describe_command=commands.describe,
+            command_durations=commands.DURATION_LABELS,
         )
 
     # ---- triage ---------------------------------------------------------
@@ -351,14 +359,25 @@ def register(web: Web) -> None:
     async def mute_list(request: Request) -> Response:
         async with database.session() as session:
             rules = await mutes.active(session, now=utcnow())
-        return render(request, "mutes.html", rules=rules, durations=mutes.DURATION_LABELS)
+            agents = await fleet.list_agents(session)
+        return render(
+            request,
+            "mutes.html",
+            rules=rules,
+            durations=mutes.DURATION_LABELS,
+            agents=agents,
+            agent_names={agent.id: agent.name for agent in agents},
+        )
 
     @app.post("/mutes", name="mute-create")
     @requires("alerts:write")
     async def mute_create(request: Request, body: Annotated[MuteBody, Body()]) -> Response:
         user = current(request)
-        rule_id, hostname = body.rule_id, body.hostname
+        rule_id, hostname = body.rule_id, None
+        agent_id = parse_uuid(body.agent_id) if body.agent_id else None
         async with database.session() as session:
+            if agent_id is not None and await session.get(Agent, agent_id) is None:
+                raise mutes.MuteError("That agent is not enrolled.")
             if body.alert_id is not None:
                 alert = await alerts.get_alert(session, parse_uuid(body.alert_id))
                 if alert is None or body.scope not in MUTE_SCOPES:
@@ -366,11 +385,15 @@ def register(web: Web) -> None:
                 if body.scope != "host" and not alert.rule_id:
                     raise mutes.MuteError("This alert did not come from a rule, so only its host can be muted.")
                 rule_id = alert.rule_id if body.scope in {"rule", "rule_host"} else None
-                hostname = alert.hostname if body.scope in {"rule_host", "host"} else None
+                on_host = body.scope in {"rule_host", "host"}
+                # The host is the agent that reported this alert, under the name it gave.
+                hostname = alert.hostname if on_host else None
+                agent_id = alert.agent_id if on_host else None
             rule, muted = await mutes.create(
                 session,
                 rule_id=rule_id,
                 hostname=hostname,
+                agent_id=agent_id,
                 reason=body.reason,
                 duration=body.duration,
                 actor=user.username,
@@ -397,3 +420,44 @@ def register(web: Web) -> None:
             request, "mute.delete", target=rule.rule_id or rule.hostname, detail={"rule": rule.rule_id, "host": rule.hostname}
         )
         return Response.json({"ok": True})
+
+
+def quick_actions(alert: Alert, active: list[dict[str, Any]]) -> dict[str, Any]:
+    """The responses the console can offer from this alert's own fields.
+
+    A lift is offered only while the agent still reports that action as
+    active. It ends whatever holds the action now, which may be a later
+    response than this alert's, and the page says so.
+    """
+    quick: dict[str, Any] = {}
+    fields = alert.fields
+    if alert.kind == AlertKind.RESPONSE.value:
+        action, target = fields.get("action"), fields.get("target")
+        still_active = any(item.get("action") == action and item.get("target") == target for item in active)
+        if (
+            action in commands.RESPONSE_ACTIONS
+            and isinstance(target, str)
+            and target
+            and alert.title in LIFTABLE
+            and still_active
+        ):
+            quick["lift"] = {"response_action": action, "target": target}
+        return quick
+    for name in ("peer_address", "address", "dest_ip", "daddr"):
+        value = fields.get(name)
+        if isinstance(value, str):
+            try:
+                address = ipaddress.ip_address(value)
+            except ValueError:
+                continue
+            if not (address.is_loopback or address.is_unspecified or address.is_multicast):
+                quick["block_peer"] = str(address)
+                break
+    cgroup = fields.get("cgroup_id")
+    if isinstance(cgroup, int) and not isinstance(cgroup, bool) and 0 < cgroup < 2**64:
+        quick["freeze_cgroup"] = str(cgroup)
+    return quick
+
+
+# Response records that leave an action in force.
+LIFTABLE = frozenset({"response applied", "response extended", "response would apply"})

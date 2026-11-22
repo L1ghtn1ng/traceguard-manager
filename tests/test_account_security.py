@@ -267,3 +267,79 @@ async def test_admin_password_is_still_asked_for_by_name(site: Site) -> None:
     browser, status, body = await _login(site, "admin", ADMIN_PASSWORD)
     assert (status, body) == (200, {"redirect": "/"})
     assert (await browser.get("/")).status_code == 200
+
+
+# ---- lockout that cannot keep the owner out ---------------------------------
+
+
+async def _lock(site: Site, username: str) -> None:
+    for _ in range(site.manager.config.login_max_failures):
+        await _login(site, username, "wrong-password-000")
+    assert (await _user(site, username)).locked_until is not None
+
+
+async def test_a_locked_account_opens_for_its_password_and_code_together(site: Site) -> None:
+    secret, _ = await _turn_on_two_step(site, await site.analyst(), ANALYST_PASSWORD)
+    await _lock(site, "analyst")
+    # Neither the password alone nor a wrong code says anything beyond "locked".
+    generic = {"error": "Invalid username or password."}
+    assert (await _login(site, "analyst", ANALYST_PASSWORD))[1:] == (401, generic)
+    assert (await _login(site, "analyst", ANALYST_PASSWORD, "000000"))[1:] == (401, generic)
+    async with site.manager.database.session() as session:
+        await session.execute(update(User).where(User.username == "analyst").values(totp_last_step=None))
+    code = totp.code_at(secret, totp.step_at(utcnow().timestamp()))
+    assert (await _login(site, "analyst", "wrong-password-000", code))[1] == 401  # a code alone is not enough
+    async with site.manager.database.session() as session:
+        await session.execute(update(User).where(User.username == "analyst").values(totp_last_step=None))
+    browser, status, _ = await _login(site, "analyst", ANALYST_PASSWORD, code)
+    assert status == 200 and (await browser.get("/alerts")).status_code == 200
+    assert (await _user(site, "analyst")).locked_until is None
+
+
+async def test_a_locked_account_without_two_step_stays_locked(site: Site) -> None:
+    await _lock(site, "viewer")
+    assert (await _login(site, "viewer", VIEWER_PASSWORD))[1] == 401
+
+
+async def test_wrong_passwords_to_confirm_a_change_count_towards_the_lockout(site: Site) -> None:
+    browser = await site.viewer()
+    for _ in range(site.manager.config.login_max_failures - 1):
+        wrong = await browser.post("/account/password", {"current_password": "not-the-password-0", "new_password": CHOSEN})
+        assert wrong.status_code == 400
+    last = await browser.post("/account/two-step/start", {"current_password": "not-the-password-0"})
+    assert last.status_code == 401  # locked, and this session is ended with it
+    assert (await _user(site, "viewer")).locked_until is not None
+    assert (await browser.get("/alerts")).status_code == 303
+
+
+async def test_an_operator_can_unlock_an_account_from_the_server(site: Site) -> None:
+    from traceguard_manager import accounts
+
+    await _lock(site, "admin")
+    async with site.manager.database.session() as session:
+        assert await accounts.unlock_by_name(session, username="ADMIN") is not None
+    assert (await _login(site, "admin", ADMIN_PASSWORD))[1] == 200
+
+
+# ---- refusals leave a trace ---------------------------------------------------
+
+
+async def _audit(site: Site, action: str) -> list[AuditEvent]:
+    async with site.manager.database.session() as session:
+        return list(await session.scalars(select(AuditEvent).where(AuditEvent.action == action)))
+
+
+async def test_a_permission_denial_is_audited(site: Site) -> None:
+    viewer = await site.viewer()
+    assert (await viewer.post("/users", {"username": "sneaky", "password": TEMPORARY, "role": "admin"})).status_code == 403
+    denied = await _audit(site, "access.denied")
+    assert [(event.actor, event.target, event.outcome) for event in denied] == [("viewer", "/users", "failure")]
+
+
+async def test_a_refused_change_is_audited(site: Site) -> None:
+    admin = await site.admin()
+    me = await _user(site, "admin")
+    refused = await admin.send("DELETE", f"/users/{me.id}")
+    assert refused.status_code == 400
+    events = await _audit(site, "request.refused")
+    assert len(events) == 1 and events[0].actor == "admin" and "own account" in str(events[0].detail)

@@ -138,3 +138,25 @@ async def test_api_app_never_sets_cookies(site: Site) -> None:
     assert "set-cookie" not in response.headers
     assert response.headers["cache-control"].startswith("no-store")
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_junk_tokens_from_an_address_never_lock_out_its_agents(site: Site) -> None:
+    # Agents behind one NAT or proxy share an address; junk from it must not block them.
+    for _ in range(60):
+        assert (await site.ingest([detection()], token="tgm_" + "x" * 43)).status_code == 401
+    assert (await site.ingest([detection()])).status_code == 200
+
+
+async def test_an_agent_over_its_hourly_alert_cap_is_asked_to_wait(site: Site) -> None:
+    object.__setattr__(site.manager.config, "ingest_max_alerts_per_hour", 3)
+    try:
+        assert (await site.ingest([detection("A"), detection("B")])).status_code == 200
+        over = await site.ingest([heartbeat(agent_version="9.9.9"), detection("C"), detection("D")])
+        assert over.status_code == 429 and over.headers["retry-after"] == "300"
+        assert await _count_alerts(site) == 2
+        async with site.manager.database.session() as session:
+            agent = (await session.scalars(select(Agent))).one()
+        assert agent.agent_version == "9.9.9"  # its health still counts
+        assert (await site.ingest([heartbeat()])).status_code == 200  # batches without alerts are never refused
+    finally:
+        object.__setattr__(site.manager.config, "ingest_max_alerts_per_hour", 10_000)

@@ -36,10 +36,12 @@ class MuteError(DomainError):
     """A user-facing validation failure. The message is safe to show."""
 
 
-def matches(rules: Sequence[MuteRule], *, rule_id: str | None, hostname: str) -> bool:
+def matches(rules: Sequence[MuteRule], *, rule_id: str | None, hostname: str, agent_id: uuid.UUID) -> bool:
     """True when any rule covers an alert. A rule's empty side matches everything."""
     return any(
-        (rule.rule_id is None or rule.rule_id == rule_id) and (rule.hostname is None or rule.hostname == hostname)
+        (rule.rule_id is None or rule.rule_id == rule_id)
+        and (rule.agent_id is None or rule.agent_id == agent_id)
+        and (rule.hostname is None or rule.hostname == hostname)
         for rule in rules
     )
 
@@ -63,6 +65,7 @@ async def create(
     *,
     rule_id: str | None,
     hostname: str | None,
+    agent_id: uuid.UUID | None = None,
     reason: str,
     duration: str,
     actor: str,
@@ -75,7 +78,7 @@ async def create(
     rule_id = (rule_id or "").strip()[:200] or None
     hostname = (hostname or "").strip()[:255] or None
     reason = reason.strip()
-    if rule_id is None and hostname is None:
+    if rule_id is None and hostname is None and agent_id is None:
         raise MuteError("Choose a rule, a host, or both to mute.")
     if not reason:
         raise MuteError("Say why this is being muted, so the next person knows.")
@@ -86,6 +89,7 @@ async def create(
     length = DURATIONS[duration]
     rule = MuteRule(
         rule_id=rule_id,
+        agent_id=agent_id,
         hostname=hostname,
         reason=reason,
         created_by=actor,
@@ -97,6 +101,8 @@ async def create(
     scope = [Alert.status == AlertStatus.OPEN.value]
     if rule_id is not None:
         scope.append(Alert.rule_id == rule_id)
+    if agent_id is not None:
+        scope.append(Alert.agent_id == agent_id)
     if hostname is not None:
         scope.append(Alert.hostname == hostname)
     result = await session.execute(

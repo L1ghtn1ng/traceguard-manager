@@ -193,6 +193,16 @@ def _heartbeat(host: DemoHost, at: datetime) -> dict[str, Any]:
         "ringbuf_dropped_events": 0,
         "ringbuf_degraded": False,
         "detection_rules": len(RULES),
+        "agent_version": "1.9.0",
+        "kernel_release": "6.12.48-1-amd64",
+        "os_name": "Debian GNU/Linux 13 (trixie)",
+        "response_mode": "dry-run",
+        "commands_enabled": False,
+        "export_dropped_records": 0,
+        "export_dropped_alerts": 0,
+        "export_rejected_batches": 0,
+        "export_spool_batches": 0,
+        "active_responses": [],
     }
 
 

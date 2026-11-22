@@ -202,7 +202,15 @@ function showToken(data) {
   dialog.querySelector("#token-agent").textContent = data.name;
   dialog.querySelector("#token-snippet").textContent =
     `TRACEGUARD_EVENT_EXPORT_URL=${window.location.origin}/api/v1/events\n` +
-    `TRACEGUARD_EVENT_EXPORT_AUTHORIZATION=Bearer ${data.token}`;
+    `TRACEGUARD_EVENT_EXPORT_AUTHORIZATION=Bearer ${data.token}\n` +
+    `TRACEGUARD_EVENT_EXPORT_EVENTS=alerts\n` +
+    `TRACEGUARD_EVENT_SCHEMA=traceguard\n` +
+    `# Optional: take commands from this console (TraceGuard 1.9+)\n` +
+    `# TRACEGUARD_COMMAND_URL=${window.location.origin}/api/v1/commands\n` +
+    `# Optional: fetch the signed policy assigned here, with the key from Policies\n` +
+    `# TRACEGUARD_POLICY_URL=${window.location.origin}/api/v1/policy\n` +
+    `# TRACEGUARD_POLICY_AUTHORIZATION=Bearer ${data.token}\n` +
+    `# TRACEGUARD_POLICY_SIGNING_KEY=/etc/traceguard/manager-policy.pub`;
   showOnly(dialog);
   watchConnection(dialog, data.id);
 }
@@ -277,15 +285,16 @@ function showFormError(form, message) {
 }
 
 // The second step of sign-in only appears for accounts that have it turned on.
-function askForCode(form) {
+function askForCode(form, { required = true } = {}) {
   const step = form.querySelector("[data-two-step]");
   const input = step?.querySelector("input");
   if (!step || !input) return false;
   step.hidden = false;
   input.disabled = false;
-  input.required = true;
+  input.required = required;
   input.focus();
   input.select();
+  form.querySelector("[data-show-two-step]")?.remove();
   return true;
 }
 
@@ -294,6 +303,7 @@ document.addEventListener("submit", async (event) => {
   if (!form) return;
   event.preventDefault();
   if (!form.reportValidity()) return;
+  if (form.dataset.confirm && !(await confirmAction(form.dataset.confirm))) return;
   const buttons = form.querySelectorAll("button");
   showFormError(form, "");
   buttons.forEach((button) => (button.disabled = true));
@@ -364,6 +374,14 @@ async function bulkAssign(ids) {
 }
 
 document.addEventListener("click", async (event) => {
+  // A locked account still opens for its password and code given together.
+  const twoStep = event.target.closest("[data-show-two-step]");
+  if (twoStep) {
+    const form = twoStep.closest("form");
+    if (form) askForCode(form, { required: false });
+    return;
+  }
+
   const opener = event.target.closest("[data-open-dialog]");
   if (opener) {
     const dialog = document.getElementById(opener.dataset.openDialog);
@@ -830,3 +848,26 @@ rememberAlertList();
 setUpAlertNavigation();
 showNotificationSettings();
 startLiveUpdates();
+
+// ---- agent commands -------------------------------------------------------
+
+// Refreshing policy needs no target or duration, so those fields step aside.
+function syncCommandForm(select) {
+  const form = select.closest("form");
+  const needsTarget = select.value !== "refresh_policy";
+  for (const selector of ["[data-command-target]", "[data-command-duration]"]) {
+    const field = form?.querySelector(selector);
+    if (!field) continue;
+    field.hidden = !needsTarget;
+    field.querySelectorAll("input, select").forEach((input) => {
+      input.disabled = !needsTarget;
+      if (input.tagName === "INPUT") input.required = needsTarget;
+    });
+  }
+}
+
+document.addEventListener("change", (event) => {
+  const select = event.target.closest("[data-command-action]");
+  if (select) syncCommandForm(select);
+});
+document.querySelectorAll("[data-command-action]").forEach(syncCommandForm);

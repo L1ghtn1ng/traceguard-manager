@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from . import __version__, accounts, audit, demo, fleet
+from . import __version__, accounts, audit, demo, fleet, policies
 from .config import Config, ConfigError
 from .db import MIGRATIONS_DIR, Database, SchemaError
 from .errors import DomainError
@@ -42,6 +42,9 @@ def _parser() -> argparse.ArgumentParser:
         help="Read the password from standard input instead of prompting",
     )
 
+    unlock = commands.add_parser("unlock-user", help="Clear a dashboard user's sign-in lockout")
+    unlock.add_argument("username")
+
     agent = commands.add_parser("create-agent", help="Enrol an agent and print its token once")
     agent.add_argument("name")
 
@@ -51,7 +54,33 @@ def _parser() -> argparse.ArgumentParser:
     )
     sample.add_argument("--remove", action="store_true", help="Delete the sample agents and their alerts")
     sample.add_argument("--force", action="store_true", help="Add sample data even though real agents are enrolled")
+
+    key = commands.add_parser("policy-key", help="Create or show the key that signs central policies")
+    key_actions = key.add_subparsers(dest="key_action", required=True)
+    generate = key_actions.add_parser("generate", help="Write a new private key (mode 0600) and print its public key")
+    generate.add_argument("path", help="Where to write the private key; set TGM_POLICY_SIGNING_KEY_FILE to it")
+    public = key_actions.add_parser("public", help="Print the public key agents verify policies with")
+    public.add_argument("path", help="The private key file")
     return parser
+
+
+def _policy_key(args: argparse.Namespace) -> int:
+    """Key management needs no database or configuration, only the key file."""
+    try:
+        if args.key_action == "generate":
+            signer = policies.generate_key(args.path)
+            print(f"Wrote {args.path}. Set TGM_POLICY_SIGNING_KEY_FILE={args.path} and restart.", file=sys.stderr)
+        else:
+            signer = policies.load_signer(args.path)
+    except FileExistsError:
+        print(f"error: {args.path} already exists; refusing to overwrite a signing key", file=sys.stderr)
+        return 2
+    except (OSError, policies.SigningKeyError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    # Agents verify with this; save it as TRACEGUARD_POLICY_SIGNING_KEY on each.
+    print(signer.public_pem(), end="")
+    return 0
 
 
 def _read_password(*, from_stdin: bool) -> str:
@@ -94,6 +123,19 @@ async def _create_agent(config: Config, *, name: str) -> None:
         await database.dispose()
     print(f"Enrolled agent {agent.name!r}. This token is shown once:\n")
     print(f"  TRACEGUARD_EVENT_EXPORT_AUTHORIZATION=Bearer {token}")
+
+
+async def _unlock_user(config: Config, *, username: str) -> None:
+    database = Database(config)
+    try:
+        async with database.session() as session:
+            user = await accounts.unlock_by_name(session, username=username)
+            if user is None:
+                raise DomainError(f"No user named {username!r}.")
+            await audit.record(session, actor="cli", action="user.unlock", target=user.username)
+    finally:
+        await database.dispose()
+    print(f"Unlocked {user.username!r}; it can sign in again.")
 
 
 async def _check_schema(config: Config) -> None:
@@ -160,6 +202,8 @@ def _serve(config: Config, args: argparse.Namespace) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "policy-key":
+        return _policy_key(args)
     try:
         config = Config.from_env()
         match args.command:
@@ -173,6 +217,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 asyncio.run(_create_user(config, username=args.username, password=password, role=args.role))
             case "create-agent":
                 asyncio.run(_create_agent(config, name=args.name))
+            case "unlock-user":
+                asyncio.run(_unlock_user(config, username=args.username))
             case "demo-data":
                 asyncio.run(_demo_data(config, remove=args.remove, force=args.force))
     except (ConfigError, DomainError, SchemaError) as error:

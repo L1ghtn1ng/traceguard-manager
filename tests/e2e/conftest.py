@@ -75,6 +75,10 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Server]:
         # Every browser here shares one address, so the suite needs more sign-ins than one person would.
         "TGM_LOGIN_REQUESTS_PER_MINUTE": "100",
     }
+    # Central policy on, so the policy pages and endpoint work as in production.
+    key_path = workdir / "policy-signing.key"
+    _cli(env, "policy-key", "generate", str(key_path))
+    env["TGM_POLICY_SIGNING_KEY_FILE"] = str(key_path)
     _cli(env, "migrate")
     for role, (username, password) in USERS.items():
         _cli(env, "create-user", username, "--role", role, "--password-stdin", stdin=password + "\n")

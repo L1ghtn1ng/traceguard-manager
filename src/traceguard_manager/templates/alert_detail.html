@@ -83,6 +83,56 @@
   </div>
 
   <div class="stack">
+    {% set can_command = "commands:send" in current.scopes and agent and agent.enabled %}
+    {% if linked or (can_command and quick) or sent %}
+    <section class="card" data-testid="respond">
+      <header class="card-head"><div><h2>Response</h2><p class="muted">{% if agent and agent.commands_enabled %}Sent to {{ agent.name }} on its next poll{% elif agent %}{{ agent.name }} has not said it accepts commands{% endif %}</p></div></header>
+      {% if can_command and quick %}
+      <div class="pad stack-sm">
+        {% if "block_peer" in quick %}
+        <form class="form form-inline" data-api="/agents/{{ agent.id }}/commands" data-then="reload" data-confirm="Block {{ quick["block_peer"] }} on {{ agent.name }}?" data-testid="quick-block">
+          <input type="hidden" name="action" value="block_peer"><input type="hidden" name="target" value="{{ quick["block_peer"] }}"><input type="hidden" name="alert_id" value="{{ alert.id }}">
+          <label class="field"><span>Block <code>{{ quick["block_peer"] }}</code> for</span>
+            <select class="input" name="duration">{% for key, label in command_durations.items() %}<option value="{{ key }}"{% if key == "1h" %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+          <p class="form-error" role="alert" hidden></p>
+          <div class="btn-row"><button class="btn" type="submit">Block peer</button></div>
+        </form>
+        {% endif %}
+        {% if "freeze_cgroup" in quick %}
+        <form class="form form-inline" data-api="/agents/{{ agent.id }}/commands" data-then="reload" data-confirm="Freeze cgroup {{ quick["freeze_cgroup"] }} on {{ agent.name }}? Every process in it stops until it is thawed." data-testid="quick-freeze">
+          <input type="hidden" name="action" value="freeze_cgroup"><input type="hidden" name="target" value="{{ quick["freeze_cgroup"] }}"><input type="hidden" name="alert_id" value="{{ alert.id }}">
+          <label class="field"><span>Freeze cgroup <code>{{ quick["freeze_cgroup"] }}</code> for</span>
+            <select class="input" name="duration">{% for key, label in command_durations.items() %}<option value="{{ key }}"{% if key == "15m" %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+          <p class="form-error" role="alert" hidden></p>
+          <div class="btn-row"><button class="btn" type="submit">Freeze cgroup</button></div>
+        </form>
+        {% endif %}
+        {% if "lift" in quick %}
+        <button class="btn" type="button" data-testid="quick-lift" data-post="/agents/{{ agent.id }}/commands" data-body='{{ {"action": "lift_response", "response_action": quick["lift"]["response_action"], "target": quick["lift"]["target"], "alert_id": alert.id | string} | tojson }}' data-then="reload" data-confirm="Lift the {{ quick["lift"]["response_action"] | replace("_", " ") }} now active for {{ quick["lift"]["target"] }} on {{ agent.name }}? This ends it whichever response holds it, which may be a later one than this alert's.">Lift the current {{ "block" if quick["lift"]["response_action"] == "block_peer" else "freeze" }}</button>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if linked %}
+      <h3 class="list-head">{{ "Responses to this alert" if alert.kind == "detection" else "Linked by the agent" }}</h3>
+      <ul class="feed feed-compact" data-testid="linked-alerts">
+        {% for item in linked %}
+        <li><a class="feed-item" href="/alerts/{{ item.id }}"><span class="feed-bar level-{{ item.severity | level }}"></span>
+          <span class="feed-main"><strong>{{ item.title }}</strong><small>{{ item.kind | replace("_", " ") }}{% if item.fields.get("target") %} · {{ item.fields.get("target") }}{% endif %}</small></span>
+          <span class="feed-side">{{ ui.when(item.occurred_at) }}</span></a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if sent %}
+      <h3 class="list-head">Sent from here</h3>
+      <ul class="feed feed-compact">
+        {% for command in sent %}
+        <li><div class="feed-item"><span class="feed-main"><strong>{{ describe_command(command) }}</strong><small>by {{ command.created_by }}{% if command.detail %} · {{ command.detail }}{% endif %}</small></span>
+          <span class="feed-side"><span class="chip command-{{ command.status }}">{{ command.status }}</span>{{ ui.when(command.created_at) }}</span></div></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endif %}
     <section class="card">
       <header class="card-head"><div><h2>Triage</h2>
         <p class="muted">{% if alert.status_changed_by %}{{ alert.status | capitalize }} by {{ alert.status_changed_by }} · {{ ui.when(alert.status_changed_at) }}{% else %}Not yet reviewed{% endif %}</p></div>

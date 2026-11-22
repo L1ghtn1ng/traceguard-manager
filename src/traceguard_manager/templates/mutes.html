@@ -17,7 +17,7 @@
         {% for rule in rules %}
         <tr>
           <td class="col-main">{% if rule.rule_id %}<a class="row-link" href="/alerts?status=muted&amp;rule={{ rule.rule_id | urlencode }}"><code>{{ rule.rule_id }}</code></a>{% else %}<span class="muted">any rule</span>{% endif %}</td>
-          <td>{{ rule.hostname or "every host" }}</td>
+          <td>{% if rule.agent_id %}{{ agent_names.get(rule.agent_id, "removed agent") }}{% if rule.hostname %} <span class="muted">as {{ rule.hostname }}</span>{% endif %}{% else %}{{ rule.hostname or "every host" }}{% endif %}</td>
           <td>{{ rule.reason }}</td>
           <td>{{ rule.created_by }} · {{ ui.when(rule.created_at) }}</td>
           <td>{% if rule.expires_at %}{{ ui.stamp(rule.expires_at) }}{% else %}when removed{% endif %}</td>
@@ -36,11 +36,14 @@
 <dialog class="dialog" id="mute-dialog" aria-labelledby="mute-title">
   <form class="dialog-body form" data-api="/mutes" data-method="POST" data-then="reload">
     <h2 id="mute-title">Add a mute rule</h2>
-    <p class="muted">Fill in a rule, a host, or both. Leaving one empty matches every value.</p>
+    <p class="muted">Choose a rule, a host, or both. Leaving one empty matches every value.</p>
     <label class="field"><span>Rule ID</span>
       <input class="input" type="text" name="rule_id" maxlength="200" placeholder="tg-mining-pool-dns" autofocus></label>
-    <label class="field"><span>Hostname</span>
-      <input class="input" type="text" name="hostname" maxlength="255" placeholder="build-01"></label>
+    <label class="field"><span>Host</span>
+      <span class="select"><select name="agent_id">
+        <option value="">Every host</option>
+        {% for agent in agents %}<option value="{{ agent.id }}">{{ agent.name }}{% if agent.hostname and agent.hostname != agent.name %} ({{ agent.hostname }}){% endif %}</option>{% endfor %}
+      </select></span></label>
     <label class="field"><span>For how long</span>
       <span class="select"><select name="duration">
         {% for value, label in durations.items() %}<option value="{{ value }}"{% if value == "24h" %} selected{% endif %}>{{ label }}</option>{% endfor %}

@@ -54,13 +54,20 @@ class Site:
     def agent_client(self) -> TestClient:
         return TestClient(self.manager.api)
 
-    async def ingest(self, records: Sequence[object], *, token: str | None = None) -> TestResponse:
-        return await self.agent_client().arequest(
-            "POST",
-            "/api/v1/events",
-            json=list(records),
-            headers={"authorization": f"Bearer {token or self.agent_token}"},
-        )
+    async def ingest(
+        self,
+        records: Sequence[object],
+        *,
+        token: str | None = None,
+        delivery: str | None = None,
+        sender_run: str | None = None,
+    ) -> TestResponse:
+        headers = {"authorization": f"Bearer {token or self.agent_token}"}
+        if delivery is not None:
+            headers["traceguard-delivery"] = delivery
+        if sender_run is not None:
+            headers["traceguard-run"] = sender_run
+        return await self.agent_client().arequest("POST", "/api/v1/events", json=list(records), headers=headers)
 
     async def signed_in(self, username: str, password: str) -> Browser:
         browser = self.browser()

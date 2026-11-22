@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{{ policy.name if policy else "New policy" }}{% endblock %}
+{% block heading %}{{ policy.name if policy else "New policy" }}{% endblock %}
+{% block subheading %}<a class="link-quiet" href="/policies">Policies</a>{% if policy %} / <code>{{ policy.sha256[:12] }}</code> · updated {{ ui.when(policy.updated_at) }} by {{ policy.updated_by }}{% endif %}{% endblock %}
+{% block actions %}
+{% if policy %}<button class="btn btn-danger" type="button" data-post="/policies/{{ policy.id }}" data-method="DELETE" data-then="redirect" data-confirm="Delete the policy {{ policy.name }}? Agents it applies to fall back to the next match, the default, or an empty policy.">Delete</button>{% endif %}
+{% endblock %}
+{% block content %}
+<div class="grid-2 grid-2-wide">
+  <section class="card">
+    <form class="form pad" data-api="{{ '/policies/' ~ policy.id if policy else '/policies' }}" data-method="{{ 'PATCH' if policy else 'POST' }}" data-then="redirect" data-testid="policy-form">
+      <label class="field"><span>Name</span>
+        <input class="input" type="text" name="name" value="{{ policy.name if policy else '' }}" maxlength="100" required {% if not policy %}autofocus{% endif %}></label>
+      <label class="field"><span>Description</span>
+        <input class="input" type="text" name="description" value="{{ policy.description if policy else '' }}" maxlength="500" placeholder="What this policy is for"></label>
+      <label class="field"><span>Agent tags</span>
+        <input class="input" type="text" name="tags" value="{{ policy.tags | join(', ') if policy else '' }}" maxlength="600" placeholder="prod, web" list="known-tags">
+        <small class="muted">Agents with any of these tags get this policy unless a higher-priority policy also matches.</small></label>
+      <datalist id="known-tags">{% for tag in tags %}<option value="{{ tag }}">{% endfor %}</datalist>
+      <label class="field"><span>Priority</span>
+        <input class="input input-narrow" type="number" name="priority" value="{{ policy.priority if policy else 0 }}" min="-1000" max="1000" step="1" required></label>
+      <label class="check"><input type="checkbox" name="is_default"{% if policy and policy.is_default %} checked{% endif %}><span>Default: serve to agents no tagged policy matches</span></label>
+      <label class="field"><span>Policy document (YAML)</span>
+        <textarea class="input code-input" name="content" rows="24" spellcheck="false" required data-testid="policy-content">{{ content }}</textarea>
+        <small class="muted">A TraceGuard policy, <code>version: 1</code>. The agent validates it again and keeps its previous policy if it rejects this one, recording an error the manager shows as an alert.</small></label>
+      <p class="form-error" role="alert" hidden></p>
+      <div class="btn-row"><button class="btn btn-primary" type="submit">{{ "Save policy" if policy else "Create policy" }}</button><a class="btn btn-ghost" href="/policies">Cancel</a></div>
+    </form>
+  </section>
+  <section class="card">
+    <header class="card-head"><div><h2>Agents</h2><p class="muted">Agents this policy is served to</p></div></header>
+    {% if agents %}
+    <ul class="feed">
+      {% for agent, state in agents %}
+      <li><a class="feed-item" href="/agents/{{ agent.id }}">
+        <span class="feed-main"><strong>{{ agent.name }}</strong><small>{{ agent.hostname or "not yet connected" }}</small></span>
+        <span class="feed-side">{% if state == "in_sync" %}<span class="chip status-online">in use</span>{% elif state == "not_fetching" %}<span class="chip">never fetched</span>{% else %}<span class="chip status-drift">not yet</span>{% endif %}</span>
+      </a></li>
+      {% endfor %}
+    </ul>
+    {% else %}<div class="empty"><p class="muted">{% if policy %}No agent gets this policy now.{% else %}Save the policy to see which agents get it.{% endif %}</p></div>{% endif %}
+  </section>
+</div>
+{% endblock %}

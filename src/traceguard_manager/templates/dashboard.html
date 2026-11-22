@@ -36,7 +36,7 @@
   <a class="stat stat-online" href="/agents">
     <span class="stat-label">Agents online</span>
     <strong class="stat-value">{{ fleet.online }}<small>/ {{ fleet.total - fleet.disabled }}</small></strong>
-    <span class="stat-foot">{{ fleet.degraded }} degraded · {{ fleet.offline }} offline · {{ fleet.pending }} pending</span>
+    <span class="stat-foot">{{ fleet.degraded }} degraded{% if fleet.stopped %} · {{ fleet.stopped }} stopped{% endif %} · {{ fleet.offline }} offline · {{ fleet.pending }} pending</span>
   </a>
   <a class="stat stat-drift" href="/agents">
     <span class="stat-label">Policy drift</span>

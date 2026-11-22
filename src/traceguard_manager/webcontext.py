@@ -8,9 +8,11 @@ from typing import Any, Protocol
 
 from flasgo import Flasgo, Request, Response, abort
 
+from .commands import Bell
 from .config import Config
 from .db import Database
 from .notify import Transport
+from .policies import Signer
 from .signals import ChangeSignal
 
 # Sent by requests the page makes by itself, so they do not count as the person being active.
@@ -58,6 +60,9 @@ class Web:
     current: Callable[[Request], CurrentUser]
     render: Render
     log_action: LogAction
+    # None until TGM_POLICY_SIGNING_KEY_FILE is set.
+    signer: Signer | None
+    bell: Bell
 
 
 def parse_uuid(value: str) -> uuid.UUID:

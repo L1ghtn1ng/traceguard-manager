@@ -10,8 +10,9 @@ from typing import Any
 
 from flasgo import Flasgo, FlasgoJSONFormatter, configure_logging
 
+from . import commands, policies
 from .api import create_api_app
-from .config import Config
+from .config import Config, ConfigError
 from .db import Database
 from .notify import Transport
 from .signals import ChangeSignal
@@ -69,12 +70,19 @@ def create_app(config: Config | None = None, *, transport: Transport | None = No
     _configure_logging(config)
     database = Database(config)
     signal = ChangeSignal()
+    signer = None
+    if config.policy_signing_key_file:
+        try:
+            signer = policies.load_signer(config.policy_signing_key_file)
+        except policies.SigningKeyError as exc:
+            raise ConfigError(f"TGM_POLICY_SIGNING_KEY_FILE: {exc}") from exc
+    bell = commands.Bell()
     return Manager(
         config=config,
         database=database,
         signal=signal,
-        web=create_web_app(config, database, signal, transport=transport),
-        api=create_api_app(config, database, signal),
+        web=create_web_app(config, database, signal, transport=transport, signer=signer, bell=bell),
+        api=create_api_app(config, database, signal, signer=signer, bell=bell),
     )
 
 

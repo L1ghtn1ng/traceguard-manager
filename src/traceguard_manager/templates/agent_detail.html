@@ -16,6 +16,21 @@
 {% endblock %}
 {% block content_attrs %} data-live-refresh="true" data-refresh-every="30"{% endblock %}
 {% block content %}
+{% set can_command = "commands:send" in current.scopes and agent.enabled %}
+{% if agent.stopped_at %}
+<p class="callout callout-warn" data-testid="agent-stopped">{{ ui.icon("alert") }} The agent said it was stopping {{ ui.when(agent.stopped_at) }}{% if agent.stop_reason == "error" %}, after an error{% elif agent.stop_reason == "signal" %}, on a signal{% endif %}. It has not reported since.</p>
+{% endif %}
+{% if agent.export_dropped_alerts %}
+<p class="callout callout-danger" data-testid="agent-dropping">{{ ui.icon("alert") }} This agent has lost {{ agent.export_dropped_alerts }} alert{{ "s" if agent.export_dropped_alerts != 1 }} it could not queue or spool. Check that its export spool is on and has room.</p>
+{% elif agent.export_dropped_records %}
+<p class="callout callout-warn">{{ ui.icon("alert") }} This agent has dropped {{ agent.export_dropped_records }} routine record{{ "s" if agent.export_dropped_records != 1 }} because its export queue was full. Set <code>TRACEGUARD_EVENT_EXPORT_EVENTS=alerts</code> to send only what the manager uses.</p>
+{% endif %}
+{% if agent.export_rejected_batches %}
+<p class="callout callout-warn">{{ ui.icon("alert") }} The manager rejected {{ agent.export_rejected_batches }} of this agent's batches; the agent keeps them in <code>export-spool/rejected/</code>.</p>
+{% endif %}
+{% if agent.invalid_records %}
+<p class="callout callout-warn" data-testid="agent-invalid">{{ ui.icon("alert") }} {{ agent.invalid_records }} record{{ "s" if agent.invalid_records != 1 }} from this agent could not be read, most recently {{ ui.when(agent.last_invalid_at) }}. The manager reads the TraceGuard format only: set <code>TRACEGUARD_EVENT_SCHEMA=traceguard</code> on the agent.</p>
+{% endif %}
 <section class="stats">
   <div class="stat"><span class="stat-label">Status</span><strong class="stat-value stat-value-sm">{{ ui.agent_status(view.status) }}</strong><span class="stat-foot">last seen {{ ui.when(agent.last_seen_at) }}</span></div>
   <div class="stat"><span class="stat-label">Policy</span><strong class="stat-value stat-value-sm">{% if agent.policy_sha256 %}<code title="{{ agent.policy_sha256 }}">{{ agent.policy_sha256[:12] }}</code>{% else %}-{% endif %}</strong>
@@ -44,6 +59,11 @@
   <section class="card">
     <header class="card-head"><div><h2>Health</h2><p class="muted">From the latest heartbeat</p></div></header>
     <dl class="kv">
+      <div><dt>Agent</dt><dd>{{ agent.agent_version or "older than 1.9" }}{% if agent.os_name %} · {{ agent.os_name }}{% endif %}</dd></div>
+      <div><dt>Kernel</dt><dd>{{ agent.kernel_release or "-" }}</dd></div>
+      <div><dt>Responses</dt><dd>{{ agent.response_mode or "-" }}</dd></div>
+      <div><dt>Commands</dt><dd>{% if agent.commands_enabled %}accepted{% elif agent.commands_enabled is none %}not reported{% else %}off (no <code>TRACEGUARD_COMMAND_URL</code>){% endif %}</dd></div>
+      <div><dt>Export</dt><dd>{% if agent.export_spool_batches is none %}-{% else %}{{ agent.export_spool_batches }} batch{{ "es" if agent.export_spool_batches != 1 }} spooled{% endif %}</dd></div>
       <div><dt>Self-reported health</dt><dd>{% if agent.healthy is none %}-{% elif agent.healthy %}healthy{% else %}unhealthy{% endif %}</dd></div>
       <div><dt>Last heartbeat</dt><dd>{{ ui.stamp(agent.last_heartbeat_at) }}</dd></div>
       <div><dt>Ring buffer</dt><dd>{% if agent.ringbuf_degraded %}degraded{% elif agent.ringbuf_degraded is none %}-{% else %}ok{% endif %}{% if agent.ringbuf_dropped_events %} · {{ agent.ringbuf_dropped_events }} dropped{% endif %}</dd></div>
@@ -65,5 +85,79 @@
     {% endif %}
   </section>
 </div>
+<div class="grid-2 grid-2-wide">
+  <section class="card" data-testid="active-responses">
+    <header class="card-head"><div><h2>Active responses</h2><p class="muted">Blocks and freezes in force, from the latest heartbeat{% if agent.active_responses_truncated %} · <strong>the agent listed only the first {{ agent.active_responses | length }}</strong>{% endif %}</p></div></header>
+    {% if active_responses %}
+    <table class="table">
+      <thead><tr><th>Action</th><th>Target</th><th>Until</th><th></th></tr></thead>
+      <tbody>
+      {% for item in active_responses %}
+      <tr>
+        <td>{{ command_labels.get(item.action, item.action) }}{% if not item.applied %} <span class="chip">dry-run</span>{% endif %}{% if item.manual %} <span class="chip">console</span>{% endif %}</td>
+        <td><code>{{ item.target }}</code></td>
+        <td>{{ ui.stamp(item.until | parse_time) }}</td>
+        <td class="cell-actions">{% if can_command and agent.commands_enabled %}<button class="btn btn-sm" type="button" data-post="/agents/{{ agent.id }}/commands" data-body='{{ {"action": "lift_response", "response_action": item.action, "target": item.target} | tojson }}' data-then="reload" data-confirm="Lift {{ command_labels.get(item.action, item.action) | lower }} {{ item.target }} now?">Lift</button>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty"><span class="empty-icon">{{ ui.icon("check") }}</span><h3>None active</h3><p class="muted">{% if agent.agent_version %}No block or freeze is in force.{% else %}This agent does not report its responses.{% endif %}</p></div>{% endif %}
+  </section>
+
+  <section class="card" data-testid="policy-assignment">
+    <header class="card-head"><div><h2>Central policy</h2><p class="muted">What this manager serves the agent</p></div>
+      {% if "policy:manage" in current.scopes %}<a class="btn btn-ghost btn-sm" href="/policies">Policies {{ ui.icon("arrow") }}</a>{% endif %}</header>
+    <dl class="kv">
+      {% if not central_policy %}
+      <div><dt>Status</dt><dd>Central policy is off. Set <code>TGM_POLICY_SIGNING_KEY_FILE</code> to turn it on.</dd></div>
+      {% elif assignment.policy %}
+      <div><dt>Assigned</dt><dd>{% if "policy:manage" in current.scopes %}<a href="/policies/{{ assignment.policy.id }}">{{ assignment.policy.name }}</a>{% else %}{{ assignment.policy.name }}{% endif %} <code>{{ assignment.policy.sha256[:12] }}</code></dd></div>
+      <div><dt>On the agent</dt><dd data-testid="policy-state">{% if assignment.state == "in_sync" %}<span class="chip status-online">in use</span>{% elif assignment.state == "not_fetching" %}<span class="chip">never fetched</span> point <code>TRACEGUARD_POLICY_URL</code> at this manager{% else %}<span class="chip status-drift">not yet</span> {% if agent.policy_remote_sha256 %}the agent uses <code>{{ agent.policy_remote_sha256[:12] }}</code>{% else %}waiting for the agent's next heartbeat{% endif %}{% endif %}</dd></div>
+      {% else %}
+      <div><dt>Assigned</dt><dd>No policy matches this agent's tags and there is no default, so it is served an empty policy.</dd></div>
+      <div><dt>On the agent</dt><dd data-testid="policy-state">{% if assignment.state == "in_sync" %}<span class="chip status-online">in use</span>{% elif assignment.state == "not_fetching" %}<span class="chip">never fetched</span>{% else %}<span class="chip status-drift">not yet</span>{% if agent.policy_remote_sha256 %} the agent still uses <code>{{ agent.policy_remote_sha256[:12] }}</code>{% endif %}{% endif %}</dd></div>
+      {% endif %}
+      {% if agent.policy_fetched_at %}<div><dt>Last fetched</dt><dd>{{ ui.when(agent.policy_fetched_at) }}</dd></div>{% endif %}
+    </dl>
+  </section>
+</div>
+
+<section class="card" data-testid="agent-commands">
+  <header class="card-head"><div><h2>Commands</h2><p class="muted">Sent to the agent on its next poll; each expires after 10 minutes</p></div></header>
+  {% if can_command %}
+  {% if not agent.commands_enabled %}<p class="callout pad">This agent has not said it accepts commands. Set <code>TRACEGUARD_COMMAND_URL</code> on it, or commands will expire unread.</p>{% endif %}
+  <form class="form pad form-inline" data-api="/agents/{{ agent.id }}/commands" data-then="reload" data-confirm="Send this command to {{ agent.name }}?" data-testid="command-form">
+    <label class="field"><span>Action</span>
+      <select class="input" name="action" data-command-action>
+        <option value="block_peer">Block peer address</option>
+        <option value="freeze_cgroup">Freeze cgroup</option>
+        <option value="refresh_policy">Refresh policy now</option>
+      </select></label>
+    <label class="field" data-command-target><span>Target</span>
+      <input class="input" type="text" name="target" maxlength="200" placeholder="203.0.113.7 or a cgroup ID"></label>
+    <label class="field" data-command-duration><span>For</span>
+      <select class="input" name="duration">{% for key, label in command_durations.items() %}<option value="{{ key }}"{% if key == "1h" %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="btn-row"><button class="btn btn-primary" type="submit">Send</button></div>
+  </form>
+  {% endif %}
+  {% if sent %}
+  <table class="table">
+    <thead><tr><th>Command</th><th>Status</th><th>By</th><th>Sent</th><th></th></tr></thead>
+    <tbody>
+    {% for command in sent %}
+    <tr data-testid="command-row">
+      <td>{{ describe_command(command) }}</td>
+      <td><span class="chip command-{{ command.status }}">{{ command.status }}</span>{% if command.detail %}<small class="muted block">{{ command.detail }}</small>{% endif %}</td>
+      <td>{{ command.created_by }}</td>
+      <td>{{ ui.when(command.created_at) }}</td>
+      <td class="cell-actions">{% if can_command and command.status == "queued" %}<button class="btn btn-sm btn-ghost" type="button" data-post="/agents/{{ agent.id }}/commands/{{ command.id }}" data-method="DELETE" data-then="reload">Cancel</button>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<div class="empty"><p class="muted">No commands sent yet.</p></div>{% endif %}
+</section>
 {% if "agents:write" in current.scopes %}{% include "_token_dialog.html" %}{% endif %}
 {% endblock %}

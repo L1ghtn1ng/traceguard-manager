@@ -292,3 +292,34 @@ async def test_mute_rules_expire_and_need_a_reason(site: Site) -> None:
     await site.ingest([detection("A", detection_message="After expiry", detection_rule_id="tg-noisy")])
     assert (await _statuses(site))["After expiry"] == "open"
     assert "Short maintenance" not in (await analyst.get("/mutes")).text
+
+
+async def test_muting_a_spoofed_host_never_silences_the_real_one(site: Site) -> None:
+    from traceguard_manager import fleet
+
+    await site.ingest([detection("REAL", detection_message="Real host alert", detection_rule_id="tg-real")])
+    async with site.manager.database.session() as session:
+        _, spoofer_token = await fleet.enroll_agent(session, name="compromised")
+    # Another agent claims to be web-01 and sends noise.
+    await site.ingest([detection("FAKE", detection_message="Noise", hostname="web-01")], token=spoofer_token)
+    ids = await _ids(site)
+    analyst = await site.analyst()
+    body = {"alert_id": ids["Noise"], "scope": "host", "duration": "24h", "reason": "Noisy"}
+    assert (await analyst.post("/mutes", body)).status_code == 201
+    await site.ingest([detection("REAL2", detection_message="Real host again", detection_rule_id="tg-real")])
+    statuses = await _statuses(site)
+    assert statuses["Real host alert"] == "open" and statuses["Real host again"] == "open" and statuses["Noise"] == "muted"
+
+
+async def test_a_host_mute_names_an_enrolled_agent(site: Site) -> None:
+    from traceguard_manager.models import Agent
+
+    await site.ingest([detection("A", detection_message="From web-01")])
+    async with site.manager.database.session() as session:
+        agent_id = str(await session.scalar(select(Agent.id)))
+    analyst = await site.analyst()
+    created = await analyst.post("/mutes", {"agent_id": agent_id, "reason": "Rebuilding", "duration": "1h"})
+    assert created.status_code == 201 and data(created)["muted"] == 1
+    assert "web-01" in (await analyst.get("/mutes")).text
+    unknown = await analyst.post("/mutes", {"agent_id": "0" * 32, "reason": "Nobody", "duration": "1h"})
+    assert unknown.status_code == 400
