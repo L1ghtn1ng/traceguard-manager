@@ -71,9 +71,22 @@ Sample data is refused when real agents are already enrolled, unless you pass `-
 
 ## Connecting an agent
 
-1. In the dashboard open **Fleet → Enrol agent** (or run `uv run traceguard-manager create-agent web-01`).
-   The token is shown once.
-2. Add the lines it gives you to the agent's environment file:
+TraceGuard's own [guide to connecting an agent](https://github.com/L1ghtn1ng/traceguard/blob/main/docs/manager.md)
+covers the agent side in full: keeping the token in a systemd credential, private CAs and mTLS,
+central policy, commands, and troubleshooting. The short version:
+
+1. **Serve the manager over HTTPS.** TraceGuard exports only to `https://` URLs, so put a TLS
+   reverse proxy in front of `serve` (see [Production checklist](#production-checklist)). Allow
+   requests to `/api/v1/commands` to run longer than 40 seconds, because command polls are held
+   open. From the agent host,
+   `curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://manager.example.com/api/v1/events`
+   should print `401`: the manager is reachable, and only the token is missing.
+2. **Enrol the agent.** Open **Fleet → Enrol agent** and name it. The token is shown once, with
+   the settings to copy. The URLs in that snippet use the address your browser opened the
+   dashboard at, so change them if agents reach the manager at a different address. Or run
+   `uv run traceguard-manager create-agent web-01`, which prints only the
+   `TRACEGUARD_EVENT_EXPORT_AUTHORIZATION` line.
+3. **Configure the agent.** Add the settings to `/etc/traceguard/traceguard.env` on the agent:
 
    ```bash
    TRACEGUARD_EVENT_EXPORT_URL=https://manager.example.com/api/v1/events
@@ -82,12 +95,19 @@ Sample data is refused when real agents are already enrolled, unless you pass `-
    TRACEGUARD_EVENT_SCHEMA=traceguard
    ```
 
-   TraceGuard only exports to `https://` URLs, so the manager needs TLS in front of it.
-   Keep `TRACEGUARD_EVENT_SCHEMA` at `traceguard`; OCSF is not accepted, and an agent sending it
+   Keep `TRACEGUARD_EVENT_SCHEMA` at `traceguard`. OCSF is not accepted, and an agent sending it
    is flagged on its page. `TRACEGUARD_EVENT_EXPORT_EVENTS=alerts` (TraceGuard 1.9 and later) sends
    only what the manager uses, so routine telemetry never competes with alerts for the export
-   queue. Older agents ignore it.
-3. Restart the agent. Its first heartbeat marks it online.
+   queue. Older agents ignore it. If the proxy's certificate comes from a private CA, also set
+   `TRACEGUARD_EVENT_EXPORT_CA_PATH` on the agent.
+4. **Restart the agent** (`sudo systemctl restart traceguard`). The enrol dialog changes from
+   *Waiting for the agent to connect* once the first heartbeat arrives, and the agent shows as
+   online under **Fleet**. If it stays pending, check the agent's log
+   (`journalctl -u traceguard`). A `401` there means the token is wrong or was rotated, or the
+   agent is disabled.
+5. **Optional: central policy and commands.** To have the agent fetch its signed policy, see
+   [Central policy](#central-policy). To let the agent take commands from the manager, see
+   [Commands](#commands).
 
 Each agent has its own token. Rotating or disabling one agent never affects the others, and an
 agent's identity always comes from its token, never from the hostname in the payload.
