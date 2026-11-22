@@ -418,6 +418,20 @@ async def related(session: AsyncSession, alert: Alert, *, limit: int = 5) -> Rel
     return Related(same_rule_total=same_rule_total, same_rule=same_rule, same_host=same_host)
 
 
+async def linked(session: AsyncSession, alert: Alert, *, limit: int = 10) -> list[Alert]:
+    """Alerts the agent tied to this one: a detection's responses, or a response's detection."""
+    if not alert.source_alert_id:
+        return []
+    return list(
+        await session.scalars(
+            select(Alert)
+            .where(Alert.agent_id == alert.agent_id, Alert.source_alert_id == alert.source_alert_id, Alert.id != alert.id)
+            .order_by(Alert.occurred_at, Alert.id)
+            .limit(limit)
+        )
+    )
+
+
 async def history(session: AsyncSession, alert_id: uuid.UUID) -> list[AlertEvent]:
     return list(
         await session.scalars(select(AlertEvent).where(AlertEvent.alert_id == alert_id).order_by(AlertEvent.at, AlertEvent.id))

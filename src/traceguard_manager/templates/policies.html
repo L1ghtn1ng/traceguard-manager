@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Policies{% endblock %}
+{% block heading %}Policies{% endblock %}
+{% block subheading %}{{ policies | length }} {{ "policy" if policies | length == 1 else "policies" }} · signed and served to agents{% endblock %}
+{% block actions %}<a class="btn btn-primary" href="/policies/new">{{ ui.icon("plus") }} New policy</a>{% endblock %}
+{% block content %}
+{% if not public_key %}
+<p class="callout callout-warn" data-testid="policy-off">{{ ui.icon("lock") }}<span>Central policy is off: agents are not served these policies until a signing key is configured. Create one with <code>traceguard-manager policy-key generate /etc/traceguard-manager/policy-signing.key</code>, set <code>TGM_POLICY_SIGNING_KEY_FILE</code> to it, and restart.</span></p>
+{% else %}
+<section class="card" data-testid="policy-setup">
+  <header class="card-head"><div><h2>Point agents at this manager</h2><p class="muted">Each agent uses its own token, and verifies every policy with this public key</p></div>
+    <a class="btn btn-sm" href="/policies/public-key">{{ ui.icon("download") }} Public key</a></header>
+  <pre class="snippet pad"><code id="policy-snippet">TRACEGUARD_POLICY_URL={{ public_url or "https://manager.example" }}/api/v1/policy
+TRACEGUARD_POLICY_AUTHORIZATION=Bearer &lt;the agent's token&gt;
+TRACEGUARD_POLICY_SIGNING_KEY=/etc/traceguard/manager-policy.pub</code></pre>
+  <div class="btn-row pad"><button class="btn btn-sm" type="button" data-copy="#policy-snippet">{{ ui.icon("copy") }} Copy</button></div>
+</section>
+{% endif %}
+<p class="callout">{{ ui.icon("shield") }}<span>Each agent gets one policy: the highest-priority policy that shares one of its tags, or else the default. Agents with no match and no default get an empty policy, so they run on their local policy file alone.{% if unassigned %} {{ unassigned }} enabled agent{{ "s" if unassigned != 1 }} currently match{{ "es" if unassigned == 1 }} no policy.{% endif %}</span></p>
+<section class="card card-flush">
+  {% if policies %}
+  <div class="table-wrap">
+    <table class="table" data-testid="policies-table">
+      <thead><tr><th>Policy</th><th>Applies to</th><th>Priority</th><th>Agents</th><th>Digest</th><th>Updated</th></tr></thead>
+      <tbody>
+        {% for policy in policies %}
+        {% set using = assigned.get(policy.id | string, []) %}
+        <tr>
+          <td class="col-main"><a class="row-link" href="/policies/{{ policy.id }}">{{ policy.name }}</a>{% if policy.description %}<small>{{ policy.description }}</small>{% endif %}</td>
+          <td>{% if policy.is_default %}<span class="chip status-online">default</span> {% endif %}{% for tag in policy.tags %}<span class="tag">{{ tag }}</span>{% endfor %}{% if not policy.is_default and not policy.tags %}<span class="muted">nothing yet</span>{% endif %}</td>
+          <td>{{ policy.priority }}</td>
+          <td>{{ using | length }}{% set waiting = using | rejectattr("state", "equalto", "in_sync") | list | length %}{% if waiting %} <span class="chip status-drift" title="Assigned but not yet in use">{{ waiting }} pending</span>{% endif %}</td>
+          <td><code title="{{ policy.sha256 }}">{{ policy.sha256[:12] }}</code></td>
+          <td>{{ ui.when(policy.updated_at) }} <small class="muted">by {{ policy.updated_by }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><span class="empty-icon">{{ ui.icon("shield") }}</span><h3>No policies yet</h3>
+    <p class="muted">Write a policy once and every matching agent picks it up on its next refresh.</p>
+    <a class="btn btn-primary" href="/policies/new">{{ ui.icon("plus") }} New policy</a></div>
+  {% endif %}
+</section>
+{% endblock %}

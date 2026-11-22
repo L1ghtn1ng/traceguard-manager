@@ -59,13 +59,19 @@ def register(web: Web, *, session_backend: Callable[[Request], Awaitable[Princip
     async def confirm_password(request: Request, password: str, action: str) -> User | None:
         """Re-check the signed-in user's password before a sensitive change. Returns None if it is wrong."""
         me = current(request)
+        locked = False
         async with database.session() as session:
             user = await accounts.get_user(session, me.id)
             if user is None:
                 abort(401)
             verified = await security.verify_password(user.password_hash, password)
+            if not verified:
+                # Counted like a failed sign-in, so a stolen session cannot guess the password.
+                locked = await accounts.record_failed_check(session, config, user=user, now=utcnow())
         if not verified:
-            await log_action(request, action, outcome="failure", detail={"reason": "wrong password"})
+            await log_action(request, action, outcome="failure", detail={"reason": "wrong password", "locked": locked})
+            if locked:
+                abort(401)
             return None
         return user
 
@@ -172,13 +178,21 @@ def register(web: Web, *, session_backend: Callable[[Request], Awaitable[Princip
             if user is None:
                 abort(401)
             verified = await security.verify_password(user.password_hash, body.current_password)
+            locked = False
+            if not verified:
+                # Counted like a failed sign-in, so a stolen session cannot guess the password.
+                locked = await accounts.record_failed_check(session, config, user=user, now=utcnow())
             if verified:
                 if body.new_password == body.current_password:
                     raise accounts.AccountError("Choose a password you have not just been using.")
                 await accounts.change_password(session, user=user, new_password=body.new_password)
                 # Other browsers are signed out; this one keeps working.
                 await accounts.end_all_sessions(session, user.id, keep_token=token)
-        await log_action(request, "account.change_password", outcome="success" if verified else "failure")
+        await log_action(
+            request, "account.change_password", outcome="success" if verified else "failure", detail={"locked": locked}
+        )
+        if locked:
+            abort(401)
         if not verified:
             return Response.json({"error": "Current password is incorrect."}, status_code=400)
         return Response.json({"ok": True, "redirect": "/"})

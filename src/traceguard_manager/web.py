@@ -32,7 +32,7 @@ from flasgo import (
 from flasgo import User as Principal
 from sqlalchemy import text
 
-from . import __version__, accounts, alerts, audit, fleet, mutes, notify
+from . import __version__, accounts, alerts, audit, commands, fleet, mutes, notify, policies
 from .config import Config
 from .db import Database, SchemaError
 from .errors import DomainError
@@ -41,6 +41,7 @@ from .routes import account as account_routes
 from .routes import admin as admin_routes
 from .routes import alerts as alert_routes
 from .routes import fleet as fleet_routes
+from .routes import policies as policy_routes
 from .signals import ChangeSignal
 from .webconfig import SECURITY_HEADERS
 from .webcontext import BACKGROUND_HEADER, CurrentUser, Web
@@ -87,6 +88,19 @@ def _ago(value: datetime | None, now: datetime) -> str:
     return "just now" if seconds < 10 else f"{seconds}s ago"
 
 
+def _parse_time(value: object) -> datetime | None:
+    """An ISO 8601 string stored in JSON, as a datetime for the time macros."""
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 def _duration(seconds: int | None) -> str:
     if seconds is None:
         return "-"
@@ -106,7 +120,13 @@ def _pretty_json(value: Any) -> str:
 
 
 def create_web_app(
-    config: Config, database: Database, signal: ChangeSignal, *, transport: notify.Transport | None = None
+    config: Config,
+    database: Database,
+    signal: ChangeSignal,
+    *,
+    transport: notify.Transport | None = None,
+    signer: policies.Signer | None = None,
+    bell: commands.Bell | None = None,
 ) -> Flasgo:
     app = Flasgo(
         settings={
@@ -135,6 +155,7 @@ def create_web_app(
             "datetime": _datetime,
             "ago": lambda value: _ago(value, utcnow()),
             "duration": _duration,
+            "parse_time": _parse_time,
             "pretty_json": _pretty_json,
             "level": alerts.level_for_severity,
         },
@@ -241,6 +262,36 @@ def create_web_app(
                 detail=detail,
             )
 
+    @app.before_request
+    def allow_large_policies(request: Request) -> None:
+        """Policy documents may be up to 4 MiB; every other request keeps the small limit."""
+        if request.method in {"POST", "PATCH"} and (request.path == "/policies" or request.path.startswith("/policies/")):
+            request.scope["max_request_body_bytes"] = policies.MAX_POLICY_REQUEST_BYTES
+
+    def signed_in(request: Request) -> bool:
+        principal = request.user
+        return principal is not None and principal.is_authenticated and not must_change_password(request)
+
+    async def audit_refusal(request: Request, action: str, detail: dict[str, Any]) -> None:
+        """Record that a signed-in user was refused, without ever failing the response."""
+        try:
+            await log_action(
+                request,
+                action,
+                target=request.path[:200],
+                outcome="failure",
+                detail={"method": request.method} | detail,
+            )
+        except Exception:
+            logger.exception("could not audit a refusal request_id=%s", request.request_id)
+
+    @app.after_request
+    async def audit_denials(request: Request, response: Response) -> Response:
+        """A signed-in user refused for lack of permission leaves a trace."""
+        if response.status_code == 403 and signed_in(request):
+            await audit_refusal(request, "access.denied", {})
+        return response
+
     @app.after_request
     def present_denials(request: Request, response: Response) -> Response:
         """Give browsers a sign-in redirect or an error page instead of bare text."""
@@ -262,8 +313,15 @@ def create_web_app(
         return error_response(request, response.status_code)
 
     @app.errorhandler(Exception)
-    def handle_error(request: Request, error: Exception) -> Response:
+    async def handle_error(request: Request, error: Exception) -> Response:
         """Fail closed: specific messages only for errors written for the user."""
+        if signed_in(request) and request.method not in {"GET", "HEAD"}:
+            # A refused change (a domain rule, or a 403 from the handler) is audited
+            # as a failure, as the changes that succeed are.
+            if isinstance(error, DomainError):
+                await audit_refusal(request, "request.refused", {"reason": str(error)[:200]})
+            elif isinstance(error, HTTPException) and error.status_code == 403:
+                await audit_refusal(request, "access.denied", {})
         match error:
             case DomainError():
                 return Response.json({"error": str(error)}, status_code=400)
@@ -306,6 +364,7 @@ def create_web_app(
                     raised = await fleet.raise_offline_alerts(
                         session, now=utcnow(), offline_after=offline_after, dialect=database.dialect
                     )
+                    await commands.expire_stale(session, now=utcnow())
                 if raised:
                     signal.notify()
             except Exception:
@@ -355,11 +414,14 @@ def create_web_app(
         current=current,
         render=render,
         log_action=log_action,
+        signer=signer,
+        bell=bell or commands.Bell(),
     )
     account_routes.register(web, session_backend=session_backend)
     alert_routes.register(web)
     fleet_routes.register(web)
     admin_routes.register(web)
+    policy_routes.register(web)
 
     @app.get("/stream", name="stream")
     @requires("alerts:read")

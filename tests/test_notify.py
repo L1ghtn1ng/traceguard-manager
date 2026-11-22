@@ -335,3 +335,23 @@ def test_redirects_are_reported_not_followed(tls_receiver: tuple[int, ssl.SSLCon
     with pytest.raises(notify.DeliveryError, match="HTTP 302"):
         notify._post_pinned(_resolved(f"https://hooks.test:{port}/redirect"), b"{}", {}, tls=trusted)
     assert len(_Receiver.received) == 1
+
+
+async def test_a_burst_of_batches_becomes_one_message_per_channel(site: Site) -> None:
+    import asyncio
+
+    from traceguard_manager.signals import ChangeSignal
+
+    await _add_channel(site)
+    signal = ChangeSignal()
+    runner = asyncio.create_task(notify.run(site.manager.database, site.manager.config, signal, transport=site.transport))
+    try:
+        for index in range(5):
+            await site.ingest([detection(f"F{index}", detection_message=f"Flood {index}", severity="critical")])
+            signal.notify()
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.3)
+    finally:
+        runner.cancel()
+    # The first batch is sent at once; the rest wait for the next pass, together.
+    assert len(site.transport.posts) == 1

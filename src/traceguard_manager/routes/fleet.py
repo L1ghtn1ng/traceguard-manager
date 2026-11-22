@@ -6,8 +6,8 @@ from urllib.parse import urlencode
 
 from flasgo import Body, Request, Response, abort
 
-from .. import alerts, fleet
-from ..models import utcnow
+from .. import alerts, audit, commands, fleet, policies
+from ..models import FINAL_COMMAND_STATUSES, utcnow
 from ..webcontext import Web, page_count, page_number, parse_uuid, query_params
 
 
@@ -19,6 +19,17 @@ class AgentCreateBody:
 @dataclass(slots=True)
 class AgentEnabledBody:
     enabled: bool
+
+
+@dataclass(slots=True)
+class CommandBody:
+    action: str
+    target: str = ""
+    response_action: str | None = None
+    # A key of commands.DURATIONS.
+    duration: str | None = None
+    # The alert the command acts on, when it was sent from one.
+    alert_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -78,11 +89,91 @@ def register(web: Web) -> None:
         async with database.session() as session:
             everyone = await fleet.list_agents(session)
             recent = await alerts.recent_for_agent(session, wanted)
+            # Everything still cancellable, then recent history.
+            waiting = await commands.outstanding(session, agent_id=wanted)
+            finished = [command for command in await commands.recent(session, agent_id=wanted) if command not in waiting]
+            sent = waiting + [command for command in finished if command.status in FINAL_COMMAND_STATUSES]
+            all_policies = await policies.list_policies(session)
         views, summary = fleet.describe_fleet(everyone, now=now, offline_after=offline_after)
         view = next((item for item in views if item.agent.id == wanted), None)
         if view is None:
             abort(404)
-        return render(request, "agent_detail.html", view=view, agent=view.agent, fleet=summary, recent=recent)
+        return render(
+            request,
+            "agent_detail.html",
+            view=view,
+            agent=view.agent,
+            fleet=summary,
+            recent=recent,
+            sent=sent,
+            describe_command=commands.describe,
+            command_labels=commands.LABELS,
+            command_durations=commands.DURATION_LABELS,
+            assignment=policies.assignment(view.agent, all_policies),
+            active_responses=fleet.in_force(view.agent, now=now),
+            central_policy=web.signer is not None,
+        )
+
+    @app.post("/agents/<agent_id>/commands", name="agent-command")
+    @requires("commands:send")
+    async def agent_command(request: Request, agent_id: str, body: Annotated[CommandBody, Body()]) -> Response:
+        """Queue a command; the agent fetches it on its next poll."""
+        alert_id = parse_uuid(body.alert_id) if body.alert_id else None
+        duration = commands.DURATIONS.get(body.duration or "")
+        actor = web.current(request).username
+        async with database.session() as session:
+            agent = await fleet.get_agent(session, parse_uuid(agent_id))
+            if agent is None:
+                abort(404)
+            if alert_id is not None:
+                alert = await alerts.get_alert(session, alert_id)
+                if alert is None or alert.agent_id != agent.id:
+                    abort(404)
+            command = await commands.queue(
+                session,
+                agent=agent,
+                action=body.action,
+                target=body.target,
+                response_action=body.response_action,
+                duration=duration,
+                alert_id=alert_id,
+                actor=actor,
+                now=utcnow(),
+            )
+            described = commands.describe(command)
+            command_id = command.id
+            # In the same transaction, so a command is never queued without its record.
+            await audit.record(
+                session,
+                actor=actor,
+                action="agent.command",
+                target=agent.name,
+                client_ip=request.client_ip,
+                request_id=request.request_id,
+                detail={"command": str(command_id), "action": body.action, "summary": described},
+            )
+        web.bell.ring(agent.id)
+        return Response.json({"id": str(command_id), "status": "queued", "summary": described}, status_code=201)
+
+    @app.delete("/agents/<agent_id>/commands/<command_id>", name="agent-command-cancel")
+    @requires("commands:send")
+    async def agent_command_cancel(request: Request, agent_id: str, command_id: str) -> Response:
+        actor = web.current(request).username
+        async with database.session() as session:
+            command = await commands.get(session, parse_uuid(command_id))
+            if command is None or command.agent_id != parse_uuid(agent_id):
+                abort(404)
+            await commands.cancel(session, command, now=utcnow(), actor=actor)
+            await audit.record(
+                session,
+                actor=actor,
+                action="agent.command_cancel",
+                target=agent_id,
+                client_ip=request.client_ip,
+                request_id=request.request_id,
+                detail={"command": command_id, "summary": commands.describe(command)},
+            )
+        return Response.json({"status": "cancelled"})
 
     @app.get("/agents/<agent_id>/state", name="agent-state")
     @requires("agents:read")

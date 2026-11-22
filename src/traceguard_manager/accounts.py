@@ -19,7 +19,17 @@ ROLE_SCOPES: dict[str, frozenset[str]] = {
     Role.VIEWER.value: frozenset({"alerts:read", "agents:read"}),
     Role.ANALYST.value: frozenset({"alerts:read", "agents:read", "alerts:write"}),
     Role.ADMIN.value: frozenset(
-        {"alerts:read", "agents:read", "alerts:write", "agents:write", "users:manage", "audit:read", "notify:manage"}
+        {
+            "alerts:read",
+            "agents:read",
+            "alerts:write",
+            "agents:write",
+            "users:manage",
+            "audit:read",
+            "notify:manage",
+            "policy:manage",
+            "commands:send",
+        }
     ),
 }
 
@@ -97,6 +107,11 @@ async def authenticate(
     The password is always verified, including for unknown or locked accounts,
     so response time does not reveal which usernames exist. A wrong second
     factor counts towards the lockout exactly as a wrong password does.
+
+    The lockout stops password guessing, so it must not let anyone keep the
+    owner out: a locked account with two-step sign-in still opens for its
+    password and a valid code given together. Anything less gets the same
+    answer as any locked account, so the lock never confirms a password.
     """
     now = utcnow()
     user = await session.scalar(select(User).where(User.username == normalise_username(username)).with_for_update())
@@ -104,8 +119,13 @@ async def authenticate(
         await security.verify_password(None, password)
         return LoginResult(None, "invalid")
     if user.locked_until is not None and user.locked_until > now:
-        await security.verify_password(None, password)
-        return LoginResult(None, "locked")
+        password_ok = await security.verify_password(user.password_hash, password)
+        if not (password_ok and user.totp_enabled_at is not None and code and _second_factor_ok(user, code, now=now)):
+            return LoginResult(None, "locked")
+        user.failed_logins = 0
+        user.locked_until = None
+        user.last_login_at = now
+        return LoginResult(user, "ok")
 
     if not await security.verify_password(user.password_hash, password):
         return LoginResult(None, "locked" if _count_failure(user, config, now=now) else "invalid")
@@ -227,6 +247,26 @@ async def change_password(session: AsyncSession, *, user: User, new_password: st
 def unlock(user: User) -> None:
     user.failed_logins = 0
     user.locked_until = None
+
+
+async def record_failed_check(session: AsyncSession, config: Config, *, user: User, now: datetime) -> bool:
+    """Count a wrong password given to confirm a change, as a failed sign-in.
+
+    Returns True when it locked the account; its sessions are then ended, so a
+    stolen session cannot keep guessing the password behind it.
+    """
+    locked = _count_failure(user, config, now=now)
+    if locked:
+        await end_all_sessions(session, user.id)
+    return locked
+
+
+async def unlock_by_name(session: AsyncSession, *, username: str) -> User | None:
+    """Clear an account's lockout, for an operator on the server."""
+    user = await session.scalar(select(User).where(User.username == normalise_username(username)).with_for_update())
+    if user is not None:
+        unlock(user)
+    return user
 
 
 def is_locked(user: User, *, now: datetime) -> bool:

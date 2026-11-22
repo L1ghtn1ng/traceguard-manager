@@ -5,6 +5,7 @@ import os
 import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import PurePath
 from typing import Self
 
 _TRUE = frozenset({"1", "true", "yes", "on"})
@@ -32,6 +33,7 @@ SETTINGS = frozenset(
         "TGM_LOGIN_REQUESTS_PER_MINUTE",
         "TGM_INGEST_MAX_RECORDS",
         "TGM_INGEST_REQUESTS_PER_MINUTE",
+        "TGM_INGEST_MAX_ALERTS_PER_HOUR",
         "TGM_ALERT_RETENTION_DAYS",
         "TGM_PUBLIC_URL",
         "TGM_NOTIFY_ALLOW_PRIVATE_NETWORKS",
@@ -41,6 +43,7 @@ SETTINGS = frozenset(
         "TGM_SMTP_PASSWORD",
         "TGM_SMTP_FROM",
         "TGM_SMTP_TLS",
+        "TGM_POLICY_SIGNING_KEY_FILE",
     }
 )
 _SMTP_TLS_MODES = frozenset({"starttls", "implicit", "none"})
@@ -128,6 +131,9 @@ class Config:
     login_requests_per_minute: int = 10
     ingest_max_records: int = 500
     ingest_requests_per_minute: int = 240
+    # New alerts one agent may store in an hour; past it, ingest answers 429 and
+    # the agent spools them for later. 0 means no cap.
+    ingest_max_alerts_per_hour: int = 10_000
     alert_retention_days: int = 90
     # Where people reach the dashboard, for links in notifications. No trailing slash.
     public_url: str | None = None
@@ -140,6 +146,9 @@ class Config:
     smtp_password: str = field(default="", repr=False)
     smtp_from: str | None = None
     smtp_tls: str = "starttls"
+    # A root-only PEM Ed25519 private key that signs the policies agents fetch.
+    # Central policy is off until it is set.
+    policy_signing_key_file: str | None = None
 
     def __post_init__(self) -> None:
         if len(self.secret_key) < MIN_SECRET_KEY_LENGTH:
@@ -161,6 +170,8 @@ class Config:
         if self.smtp_tls == "none" and self.smtp_username:
             # A password sent over an unencrypted connection is readable by anything on the path.
             raise ConfigError("TGM_SMTP_TLS=none cannot be combined with TGM_SMTP_USERNAME")
+        if self.policy_signing_key_file is not None and not PurePath(self.policy_signing_key_file).is_absolute():
+            raise ConfigError("TGM_POLICY_SIGNING_KEY_FILE must be an absolute path")
         if self.debug and self.secure_cookies:
             # Debug pages expose stack traces; never combine them with a production cookie posture.
             raise ConfigError("TGM_DEBUG=true requires TGM_SECURE_COOKIES=false and must not be used in production")
@@ -216,6 +227,9 @@ class Config:
                 minimum=1,
                 maximum=100_000,
             ),
+            ingest_max_alerts_per_hour=_int(
+                env, "TGM_INGEST_MAX_ALERTS_PER_HOUR", defaults.ingest_max_alerts_per_hour, minimum=0, maximum=10_000_000
+            ),
             alert_retention_days=_int(env, "TGM_ALERT_RETENTION_DAYS", defaults.alert_retention_days, minimum=1, maximum=3_650),
             public_url=env.get("TGM_PUBLIC_URL", "").strip().rstrip("/") or None,
             notify_allow_private_networks=_bool(env, "TGM_NOTIFY_ALLOW_PRIVATE_NETWORKS", defaults.notify_allow_private_networks),
@@ -225,6 +239,7 @@ class Config:
             smtp_password=env.get("TGM_SMTP_PASSWORD", ""),
             smtp_from=env.get("TGM_SMTP_FROM", "").strip() or None,
             smtp_tls=env.get("TGM_SMTP_TLS", defaults.smtp_tls).strip().lower(),
+            policy_signing_key_file=env.get("TGM_POLICY_SIGNING_KEY_FILE", "").strip() or None,
         )
 
     @classmethod

@@ -26,7 +26,8 @@ def test_records_are_repeatable_and_all_valid() -> None:
         assert batch.ignored == 0, host
         assert batch.heartbeat is not None, host
         kinds |= {alert.kind for alert in batch.alerts}
-    assert kinds == set(AlertKind) - {AlertKind.AGENT_OFFLINE}  # every type an agent can report has an example
+    # Every type an agent can report has an example; the manager raises the other two itself.
+    assert kinds == set(AlertKind) - {AlertKind.AGENT_OFFLINE, AlertKind.AGENT_STOPPED}
 
 
 async def test_seed_fills_every_fleet_state_and_alert_status(config: Config) -> None:

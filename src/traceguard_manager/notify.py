@@ -40,6 +40,10 @@ from .signals import ChangeSignal
 logger = logging.getLogger("traceguard_manager.notify")
 
 POLL_SECONDS = 5.0
+# After a pass that sent something, wait this long before the next, so a burst
+# of batches (or an agent flooding alerts) becomes one digest per channel, not
+# one message per batch. Nothing is lost: the next pass picks up the rest.
+MIN_PASS_SECONDS = 10.0
 CLAIM_LIMIT = 200
 # Alerts older than this are never announced, so enabling a channel does not replay history.
 CLAIM_WINDOW = timedelta(hours=1)
@@ -519,11 +523,14 @@ async def send_test(database: Database, config: Config, channel: NotificationCha
 async def run(database: Database, config: Config, signal: ChangeSignal, *, transport: Transport) -> None:
     """Announce new alerts until cancelled. Wakes at once for alerts stored by this process."""
     while True:
+        sent = 0
         try:
-            await dispatch_once(database, config, transport=transport)
+            sent = await dispatch_once(database, config, transport=transport)
         except Exception:
             # Keep the loop alive; whatever was not claimed is picked up on the next pass.
             logger.exception("notification pass failed")
+        if sent:
+            await asyncio.sleep(MIN_PASS_SECONDS)
         try:
             async with asyncio.timeout(POLL_SECONDS):
                 await signal.wait()
